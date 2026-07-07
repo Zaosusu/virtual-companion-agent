@@ -1,0 +1,12 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "SafetyAgent 安全边界员".
+Main metaphor: a safety checkpoint. A friendly short-haired Doubao-style female AI assistant holds a soft shield and checks whether the user's message needs special handling.
+Inputs: "用户消息".
+Center: "SafetyAgent", "detectSafety()", "normal / bounded / crisis".
+Rules: "自伤轻生 -> crisis", "医疗法律金融 -> bounded", "普通陪伴 -> normal".
+Effects: "crisis 安全回复优先", "crisis 不触发语音娱乐化输出", "bounded 只做信息整理和边界提醒".
+Outputs: "safety.level", "safety.note".
+Bottom explanation: "安全不是最后补丁，而是本轮编排一开始就影响输出".
+Style/medium: blue-white Chinese safety infographic, calm, not scary.
+Avoid: sensational self-harm imagery, membership card, pricing, watermark, unreadable text.

@@ -1,0 +1,11 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "MemoryAgent / CRAG 记忆查证员".
+Main metaphor: a librarian detective. A friendly short-haired Doubao-style female AI assistant searches a memory library, scores evidence cards, rejects noisy notes, and hands reliable evidence to the next Agent.
+Inputs: "用户问题", "最近历史", "长期记忆库", "memory_chunks_fts".
+Center CRAG flow: "buildRetrievalPlan()" -> "retrieveMemories()" -> "scanMemories()" -> "evaluateEvidence()" -> "quality: good / partial / poor" -> "strictEvidence".
+Reject pile: "目录噪声", "风格语料噪声", "低事实信号".
+Outputs: "retrievedMemories", "retrievalPlan", "evidenceCount", "rejectedCount".
+Bottom explanation: "不是多塞记忆，而是先查证，再把可靠证据交出去".
+Style/medium: blue-white Chinese memory pipeline infographic, story-like, readable.
+Avoid: generic RAG buzzword poster, e-commerce, pricing, membership card, watermark, robot mascot.

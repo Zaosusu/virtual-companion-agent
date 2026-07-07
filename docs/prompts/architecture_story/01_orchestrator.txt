@@ -1,0 +1,12 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "Orchestrator 总控台" in a virtual companion agent project.
+Main metaphor: a clean control desk. A friendly short-haired Doubao-style female AI assistant coordinates several specialist desks. A glowing user message enters from the left and is passed through the real project pipeline.
+Must explain this real flow:
+"POST /api/chat" -> "runCragRetrieval" -> "contextAgent" -> "textAgent" -> "routerAgent" -> "imageAgent / voiceAgent" -> "reviewAgent" -> "orchestration.outputs".
+Show outputs on the right: "reply", "router", "agents", "outputs".
+Text (verbatim): "Orchestrator：总控台", "先组织上下文，再安排 Agent 接力", "orchestrateCompanionTurn()", "orchestration.outputs".
+Style/medium: blue-white Chinese product architecture infographic, story-like, friendly but professional.
+Composition/framing: central control desk, arrows left to right, readable large Chinese labels.
+Constraints: one Agent story only; no membership card; no pricing; no e-commerce; no cloud-native generic template.
+Avoid: 月卡, 会员, VIP, 价格, 购买, 订单, 电商, AWS, Kubernetes, QR code, GitHub, robot mascot, watermark, unreadable text.

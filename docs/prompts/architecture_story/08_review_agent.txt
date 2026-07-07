@@ -1,0 +1,12 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "ReviewAgent 出口质检员".
+Main metaphor: a quality gate. A friendly short-haired Doubao-style female AI assistant checks the final output card before it leaves the system.
+Inputs: "channel", "draftText", "userText", "recentHistory", "agent persona", "voiceStyle".
+Center: "ReviewAgent", "reviewAgentOutput()", "keep or rewrite".
+Voice hard checks: "不能说我不能发语音", "不能说只能打字", "不能引导打电话", "必须适合语音气泡播放".
+Two layers: "LLM review JSON" + "local hard check fallback".
+Outputs: "action", "text", "reason", "reviewer: llm / local".
+Bottom explanation: "输出前先过质检，避免通道能力和内容互相打架".
+Style/medium: Chinese quality gate infographic, blue-white, clean, story-like.
+Avoid: generic QA factory, membership card, pricing, watermark, unreadable text.

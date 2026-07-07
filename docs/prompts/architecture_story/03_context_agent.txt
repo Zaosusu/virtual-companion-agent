@@ -1,0 +1,11 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "ContextAgent 上下文整理员".
+Main metaphor: a research desk. A friendly short-haired Doubao-style female AI assistant sorts role profile, history, memories, and CRAG evidence into neat folders before the reply is written.
+Inputs: "角色人设", "用户资料", "最近历史", "CRAG 证据", "长期记忆".
+Center: "ContextAgent", "runContextAgent()", "整理成本轮上下文计划".
+Special checks: "大语料压缩", "身份风险", "blockedFacts", "warnings".
+Outputs: "characterFacts", "userMemory", "styleHints", "blockedFacts", "warnings".
+Bottom explanation: "先把可用上下文整理清楚，TextAgent 才不乱拿资料".
+Style/medium: Chinese technical story infographic, blue-white, clean desk and folders.
+Avoid: membership card, pricing, e-commerce, generic cloud architecture, watermark, unreadable text.

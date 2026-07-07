@@ -1,0 +1,11 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "TextAgent 主回复撰写员".
+Main metaphor: a writer desk. A friendly short-haired Doubao-style female AI assistant writes the main companion reply using character persona, context plan, CRAG evidence, history, and safety rules.
+Inputs: "character", "memory", "retrievedMemories", "retrievalPlan", "contextPlan", "history", "message".
+Center: "TextAgent", "runTextAgent()", "createCompanionReply()".
+Rules: "证据不足不编造", "危机场景安全优先", "高风险话题边界提醒", "图片请求可生成 tool:image.generate".
+Outputs: "reply.text", "reply.workflow", "reply.mood", "reply.safety", "reply.tool".
+Bottom explanation: "它写主回复，但必须尊重 CRAG 证据和安全边界".
+Style/medium: Chinese product architecture infographic, warm writer story, blue-white.
+Avoid: generic chatbot diagram, sales page, membership card, watermark, unreadable text.

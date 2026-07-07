@@ -1,0 +1,13 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "VoiceAgent 情绪导演".
+Main metaphor: a small recording studio. A friendly short-haired Doubao-style female AI assistant directs how the reply should sound before TTS.
+Inputs: "reply.text", "userText", "最近 20 条历史", "workflow", "mood", "角色声音风格".
+Center: "VoiceAgent", "buildVoiceOutputPlan()", "buildVoiceAgentDecision()".
+Emotion signals: "crying", "panic", "pleading", "secretive", "shy", "happy", "comforting", "angry", "natural".
+Flow: "reviewAgent 先复核语音文本" -> "识别情绪" -> "生成 voiceDecision.instruction" -> "audioConfigFromModel()" -> "POST /api/tts".
+Safety note: "safety_crisis 不规划语音".
+Outputs: "voice text", "emotion", "label", "instruction", "audioConfig".
+Bottom explanation: "它捕获上下文情绪，把文字变成适合朗读的语音演绎".
+Style/medium: blue-white Chinese recording studio infographic, friendly and professional.
+Avoid: membership card, phone call app, sales poster, unreadable text, watermark.

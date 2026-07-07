@@ -1,0 +1,13 @@
+Use case: presentation infographic
+Asset type: Chinese agent responsibility card
+Primary request: Create a 16:9 Chinese architecture story poster for "RouterAgent 总调度员".
+Main metaphor: a front-desk dispatcher. A friendly short-haired Doubao-style female AI assistant receives user requests and points each one to the right lane.
+Inputs on the left: "普通聊天", "想看图", "想听语音", "只要文字", "危机表达".
+Center: "RouterAgent", "routeAgentTurn()", "先判断这是什么事".
+Decisions: "capabilities.image", "capabilities.voice", "safety_crisis 不出语音".
+Outputs on the right: "textAgent", "imageAgent", "voiceAgent", "safety flow".
+Bottom explanation: "先分流，再处理，前端只消费 outputs".
+Style/medium: blue-white Chinese product architecture infographic, story-like, clean rounded cards.
+Composition/framing: central dispatcher hub with arrows.
+Constraints: readable Chinese; no generic architecture; no unrelated business systems.
+Avoid: 月卡, 会员, 价格, 订单, 电商, DNS, WAF, CDN, AWS, Kubernetes, QR code, watermark.
