@@ -4,7 +4,7 @@ Primary request: Create a 16:9 Chinese architecture story poster for "ImageAgent
 Main metaphor: an art director. A friendly short-haired Doubao-style female AI assistant turns the reply and user intent into an image generation plan, then hands it to the image tool.
 Inputs: "reply.tool.input.prompt", "reply.text", "userText", "角色外观", "参考图", "情绪上下文".
 Center: "ImageAgent", "buildImageOutputPlan()", "生成图片工具计划".
-Flow: "routerAgent 判断需要 image" -> "image output plan" -> "POST /api/image" -> "license-backend 或自部署图片模型" -> "图片消息写入 SQLite".
+Flow: "routerAgent 判断需要 image" -> "image output plan" -> "POST /api/image" -> "远程模型接口或自部署图片模型" -> "图片消息写入 SQLite".
 Review points: "保留角色外观", "参考图走 edits", "记录 seed / finishReason / referenceMode / imageEndpoint".
 Outputs: "type=image", "prompt", "content", "explicit", "source".
 Bottom explanation: "它不直接画图，它把画图这件事变成可执行计划".

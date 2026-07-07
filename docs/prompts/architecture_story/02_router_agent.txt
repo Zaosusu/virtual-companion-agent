@@ -10,4 +10,4 @@ Bottom explanation: "先分流，再处理，前端只消费 outputs".
 Style/medium: blue-white Chinese product architecture infographic, story-like, clean rounded cards.
 Composition/framing: central dispatcher hub with arrows.
 Constraints: readable Chinese; no generic architecture; no unrelated business systems.
-Avoid: 月卡, 会员, 价格, 订单, 电商, DNS, WAF, CDN, AWS, Kubernetes, QR code, watermark.
+Avoid: pricing UI, ecommerce UI, DNS, WAF, CDN, AWS, Kubernetes, QR code, watermark.

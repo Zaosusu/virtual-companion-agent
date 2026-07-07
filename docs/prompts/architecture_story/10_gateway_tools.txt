@@ -1,11 +1,11 @@
 Use case: presentation infographic
 Asset type: Chinese execution layer story card
 Primary request: Create a 16:9 Chinese architecture story poster for "Gateway / Tools 模型通道执行层".
-Main metaphor: a secure service counter. A friendly short-haired Doubao-style female AI assistant passes approved tool requests to official gateway or self-hosted providers.
+Main metaphor: a secure model routing desk. A friendly short-haired Doubao-style female AI assistant passes approved tool requests to a deployer-provided remote model API or self-hosted providers.
 Inputs: "image output plan", "voice output plan", "chat request", "voice clone request".
-Center: "server.js", "license-backend", "self-hosted provider".
-Flow: "普通用户 -> 托管授权服务 -> StepFun" and "专业玩家 -> 本地 .env -> 自部署模型 API".
-Responsibilities: "API Key 隔离", "额度判断", "Chat/Image/TTS/Voice Clone 中转", "结果写入 SQLite", "错误转成用户可理解提示".
+Center: "server.js", "remote model API", "self-hosted provider".
+Flow: "用户 -> 远程模型接口 -> 模型供应商" and "自部署用户 -> 本地 .env -> 自部署模型 API".
+Responsibilities: "API Key 隔离", "模型通道选择", "Chat/Image/TTS/Voice Clone 调用", "结果写入 SQLite", "错误转成用户可理解提示".
 Outputs: "image", "audio", "quota", "assistant message metadata".
 Bottom explanation: "Agent 负责规划，Gateway 和 Tools 负责真正调用模型".
 Style/medium: blue-white Chinese service gateway infographic, story-like, clean.

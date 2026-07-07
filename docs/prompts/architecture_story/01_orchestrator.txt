@@ -9,4 +9,4 @@ Text (verbatim): "Orchestrator：总控台", "先组织上下文，再安排 Age
 Style/medium: blue-white Chinese product architecture infographic, story-like, friendly but professional.
 Composition/framing: central control desk, arrows left to right, readable large Chinese labels.
 Constraints: one Agent story only; no membership card; no pricing; no e-commerce; no cloud-native generic template.
-Avoid: 月卡, 会员, VIP, 价格, 购买, 订单, 电商, AWS, Kubernetes, QR code, GitHub, robot mascot, watermark, unreadable text.
+Avoid: pricing UI, ecommerce UI, cloud provider logos, QR code, GitHub, robot mascot, watermark, unreadable text.

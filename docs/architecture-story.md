@@ -26,8 +26,8 @@
 ```text
 前端负责展示。
 本地后端负责 Agent 编排、CRAG 记忆、review 复核和工具计划。
-托管授权服务负责账号、额度、API Key 隔离和模型中转。
-自部署模式给专业用户保留直连模型服务的能力。
+模型通道负责把 Chat / Image / TTS / Voice Clone 请求交给用户配置的模型服务。
+自部署模式给专业用户保留直连模型服务的能力；远程模型接口由部署方自行提供。
 ```
 
 ## 图册规划
@@ -45,7 +45,7 @@
 | 07 | [VoiceAgent 情绪导演](images/story/architecture_story_images/07_voice_agent/image_1.png) | 捕获上下文情绪并生成 TTS 演绎指令 |
 | 08 | [ReviewAgent 出口质检员](images/story/architecture_story_images/08_review_agent/image_1.png) | 输出前复核通道内容 |
 | 09 | [SafetyAgent 安全边界员](images/story/architecture_story_images/09_safety_agent/image_1.png) | 识别 normal / bounded / crisis |
-| 10 | [Gateway / Tools 模型通道执行层](images/story/architecture_story_images/10_gateway_tools/image_1.png) | 调用托管授权服务或自部署模型 |
+| 10 | [Gateway / Tools 模型通道执行层](images/story/architecture_story_images/10_gateway_tools/image_1.png) | 调用远程模型接口或自部署模型 |
 
 对应 image2 / api2img 提示词在：
 

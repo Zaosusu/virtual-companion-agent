@@ -1,29 +1,29 @@
 # Virtual Companion Agent
 
-开源客户端仓库。项目默认接入 StepFun 生态，同时支持托管授权服务和自部署模型配置两种使用方式。
+开源客户端仓库。项目包含浏览器前端、Electron 桌面壳、本地 Node API、Agent 编排、本地 SQLite 记忆和多模态工具入口。
 
-架构故事导览见：
+这个仓库不包含任何私有运行环境资产，例如 `.env`、本地数据库、生成输出、API Key、访问令牌、账号数据或商业授权数据。
+
+架构故事导览：
 
 ```text
 docs/architecture-story.md
 docs/agent-roles-storyboard.md
 ```
 
-详细技术架构见：
+详细技术架构：
 
 ```text
 docs/architecture.md
 ```
 
-StepFun 接入说明见：
+StepFun / OpenAI-compatible 接入说明：
 
 ```text
 docs/stepfun-api.md
 ```
 
 ## 仓库范围
-
-本仓库包含开源客户端和本地运行时：
 
 | 模块 | 内容 |
 | --- | --- |
@@ -32,10 +32,9 @@ docs/stepfun-api.md
 | Agent | 路由、文本、图片、语音、记忆和安全编排 |
 | Storage | 本地 SQLite 记忆与角色配置 |
 | Tools | 图片、语音、声音克隆工具入口 |
+| Model Config | 自部署模型配置，以及可选的远程模型接口地址 |
 
-官方发行版的账号、授权码、验证码、额度管理和模型中转能力由托管授权服务承担，作为独立部署组件与开源客户端配合使用。
-
-`.env`、本地数据库、生成输出、API Key、访问令牌和授权数据属于运行环境资产，不随开源客户端分发。
+开源客户端只定义本地运行逻辑和模型调用接口。任何远程用户体系、支付、用量策略、密钥保管或管理能力，都属于部署方自己的服务边界，不是本开源仓库的一部分。
 
 ## 架构概览
 
@@ -51,14 +50,16 @@ docs/stepfun-api.md
         -> memoryAgent
         -> safetyAgent
       -> 本地 SQLite
-      -> 托管授权服务 或 自部署模型 API
+      -> 模型通道
+        -> 自部署模型 API
+        -> 或部署方提供的远程模型接口
 ```
 
 一句话分工：
 
 ```text
-客户端负责体验、角色、记忆和 Agent 编排。
-托管授权服务负责账号、授权码、额度、API Key 隔离和 StepFun 中转。
+客户端负责体验、角色、记忆、Agent 编排和本地数据。
+模型通道负责把 Chat / Image / TTS / Voice Clone 请求交给用户配置的模型服务。
 ```
 
 ## Agent 图册
@@ -112,43 +113,36 @@ docs/stepfun-api.md
 
 ## 运行模式
 
-优先级：
+### 自部署模型
 
-```text
-官方账号 / 授权码绑定 > 自部署 API Key > 免费体验模式
-```
-
-### 普通用户
-
-普通用户登录账号或绑定授权码，使用托管授权服务：
-
-```text
-客户端 -> 托管授权服务 -> StepFun
-```
-
-用户侧无需接触模型 API Key。
-
-### 专业玩家
-
-专业玩家可以开启自部署模式：
+适合希望自己管理模型供应商、API Key 和调用成本的用户。
 
 ```env
 COMPANION_SELF_HOSTED=1
+STEPFUN_BASE_URL=https://api.stepfun.com/step_plan/v1
+STEPFUN_MODEL=step-3.7-flash
+STEP_API_KEY=your-api-key
+STEPFUN_IMAGE_MODEL=step-image-edit-2
+STEPFUN_AUDIO_MODEL=stepaudio-2.5-tts
 ```
 
-然后在 `.env` 中配置自己的模型服务：
+### 远程模型接口
 
-| 能力 | 配置项 |
-| --- | --- |
-| 文本模型 | `STEPFUN_BASE_URL` / `STEPFUN_MODEL` / `STEP_API_KEY` |
-| 图片模型 | `STEPFUN_IMAGE_BASE_URL` / `STEPFUN_IMAGE_MODEL`，默认复用 `STEP_API_KEY` |
-| 语音模型 | `STEPFUN_AUDIO_BASE_URL` / `STEPFUN_AUDIO_MODEL`，默认复用 `STEP_API_KEY` |
+客户端也可以连接部署方提供的远程模型接口。公开仓库只保留客户端侧配置和接口约定，不包含该远程服务的实现、管理界面、数据库或运维配置。
 
-自部署模式直接连接用户配置的模型服务，适合需要自主管理模型供应商和调用成本的用户。
+```env
+COMPANION_OFFICIAL_BASE_URL=https://your-remote-model-api.example.com
+COMPANION_OFFICIAL_MODEL=step-3.7-flash
+```
 
-### 免费体验
+### 本地体验模式
 
-未配置官方授权或自部署 API Key 时进入免费体验模式。免费额度由本地配置和托管授权服务策略共同控制。
+未配置可用模型通道时，客户端仍可运行本地界面、角色、记忆和部分无模型能力。是否允许公共免费体验由本地配置控制：
+
+```env
+COMPANION_PUBLIC_FREE_ACCESS=0
+COMPANION_FREE_DAILY_CHAT_LIMIT=10
+```
 
 ## 普通用户版
 
@@ -162,10 +156,9 @@ release/虚拟角色智能体 0.1.0.exe
 
 ## 开发启动
 
-启动客户端：
-
 ```powershell
 cd open-source-client
+npm install
 npm start
 ```
 
@@ -175,10 +168,10 @@ npm start
 http://localhost:5177
 ```
 
-连接托管授权服务时，在 `.env` 中配置服务地址：
+桌面预览：
 
-```env
-COMPANION_OFFICIAL_BASE_URL=https://your-license-service.example.com
+```powershell
+npm run desktop
 ```
 
 ## 测试
@@ -225,30 +218,20 @@ open-source-client/.env
 ```env
 PORT=5177
 COMPANION_HOST=127.0.0.1
-COMPANION_OFFICIAL_BASE_URL=http://localhost:8787
-COMPANION_OFFICIAL_MODEL=step-3.7-flash
+COMPANION_SELF_HOSTED=0
+COMPANION_PUBLIC_FREE_ACCESS=0
 COMPANION_FREE_DAILY_CHAT_LIMIT=10
 COMPANION_COMPRESSION_WINDOW=100
-COMPANION_SELF_HOSTED=0
 ```
 
 部署环境建议使用项目级 `.env` 管理配置，避免依赖 PowerShell 全局 `$env:`。
 
-## 实现与路线图
-
-实现概览：
-
-- 后端 Agent 编排入口为 `src/orchestrator/`。
-- `/api/chat` 返回统一 `orchestration.outputs`。
-- 前端消费后端输出计划并触发图片/语音工具。
-- 测试集覆盖 Agent 路由、语音情绪和 RAG 基础逻辑。
-
-路线图：
+## 路线图
 
 - 保持全仓 Markdown、配置模板和示例资产使用 UTF-8 编码。
 - 拆分 `server.js` 到 `routes/`、`services/`、`gateways/`、`policies/`。
-- 授权服务存储从 JSON 升级 SQLite 或 Postgres。
-- 完善授权额度、网关 mock、端到端 smoke test。
+- 完善模型网关 mock、自部署模型测试和端到端 smoke test。
+- 优化首次启动引导和错误提示。
 
 ## License
 

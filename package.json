@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "license": "AGPL-3.0-only",
-  "description": "A local virtual companion agent with open self-hosting and optional official license service.",
+  "description": "A local virtual companion agent with self-hosted model support and optional remote model API integration.",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
