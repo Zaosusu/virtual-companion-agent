@@ -14,32 +14,21 @@ StepFun 接入说明见：
 docs/stepfun-api.md
 ```
 
-## 系统边界
+## 仓库范围
 
-整个项目分为两个主要运行系统：
+本仓库包含开源客户端和本地运行时：
 
-```text
-open-source-client  客户端 / 本地 Agent 运行时
-license-backend     私有授权后端 / 模型中转网关
-```
+| 模块 | 内容 |
+| --- | --- |
+| UI | 浏览器前端和 Electron 桌面壳 |
+| Local API | 本地 Node.js API |
+| Agent | 路由、文本、图片、语音、记忆和安全编排 |
+| Storage | 本地 SQLite 记忆与角色配置 |
+| Tools | 图片、语音、声音克隆工具入口 |
 
-本仓库只包含开源客户端：
+官方发行版使用的账号、授权码、验证码、额度管理和模型中转服务由独立私有服务提供，不属于本仓库。
 
-- 浏览器前端。
-- 本地 Node.js API。
-- Electron 桌面壳。
-- 角色配置。
-- 本地 SQLite 记忆。
-- Agent 编排。
-- 图片、语音、声音克隆工具入口。
-
-不应提交到本仓库的内容：
-
-- 官方授权码服务源码。
-- 真实授权数据。
-- 生产 `.env`。
-- StepFun API Key。
-- 管理员 token。
+请不要提交 `.env`、本地数据库、生成输出、API Key、token 或生产授权数据。
 
 ## 当前架构
 
@@ -91,15 +80,13 @@ license-backend     私有授权后端 / 模型中转网关
 COMPANION_SELF_HOSTED=1
 ```
 
-然后配置自己的：
+然后在 `.env` 中配置自己的模型服务：
 
-```text
-Base URL
-Model
-API Key
-Image Base URL / Image Model / Image API Key
-Audio Base URL / Audio Model / Audio API Key
-```
+| 能力 | 配置项 |
+| --- | --- |
+| 文本模型 | `STEPFUN_BASE_URL` / `STEPFUN_MODEL` / `STEP_API_KEY` |
+| 图片模型 | `STEPFUN_IMAGE_BASE_URL` / `STEPFUN_IMAGE_MODEL`，默认复用 `STEP_API_KEY` |
+| 语音模型 | `STEPFUN_AUDIO_BASE_URL` / `STEPFUN_AUDIO_MODEL`，默认复用 `STEP_API_KEY` |
 
 自部署模式不经过官方授权后端，模型费用由用户自己承担。
 
