@@ -61,6 +61,55 @@ docs/stepfun-api.md
 托管授权服务负责账号、授权码、额度、API Key 隔离和 StepFun 中转。
 ```
 
+## Agent 图册
+
+完整说明见 [Agent 职责故事板](docs/agent-roles-storyboard.md)。
+
+<details>
+<summary>展开 10 张 Agent 职责图</summary>
+
+### 01 Orchestrator
+
+![Orchestrator 总控台](docs/images/story/architecture_story_images/01_orchestrator/image_1.png)
+
+### 02 RouterAgent
+
+![RouterAgent 总调度员](docs/images/story/architecture_story_images/02_router_agent/image_1.png)
+
+### 03 ContextAgent
+
+![ContextAgent 上下文整理员](docs/images/story/architecture_story_images/03_context_agent/image_1.png)
+
+### 04 MemoryAgent CRAG
+
+![MemoryAgent / CRAG 记忆查证员](docs/images/story/architecture_story_images/04_memory_crag_agent/image_1.png)
+
+### 05 TextAgent
+
+![TextAgent 主回复撰写员](docs/images/story/architecture_story_images/05_text_agent/image_1.png)
+
+### 06 ImageAgent
+
+![ImageAgent 图像计划师](docs/images/story/architecture_story_images/06_image_agent/image_1.png)
+
+### 07 VoiceAgent
+
+![VoiceAgent 情绪导演](docs/images/story/architecture_story_images/07_voice_agent/image_1.png)
+
+### 08 ReviewAgent
+
+![ReviewAgent 出口质检员](docs/images/story/architecture_story_images/08_review_agent/image_1.png)
+
+### 09 SafetyAgent
+
+![SafetyAgent 安全边界员](docs/images/story/architecture_story_images/09_safety_agent/image_1.png)
+
+### 10 Gateway / Tools
+
+![Gateway / Tools 模型通道执行层](docs/images/story/architecture_story_images/10_gateway_tools/image_1.png)
+
+</details>
+
 ## 运行模式
 
 优先级：
