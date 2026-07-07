@@ -6,6 +6,7 @@ import { loadLocalEnv } from "./src/env.js";
 import { extractMemoryCandidates, buildTurnSummary, compressConversation } from "./src/agent.js";
 import { CompanionStore } from "./src/db.js";
 import { buildVoiceAgentDecision, orchestrateCompanionTurn } from "./src/orchestrator/index.js";
+import { runCragRetrieval } from "./src/orchestrator/memoryAgent.js";
 import { generateImage } from "./src/tools/imageGeneration.js";
 import { cloneVoice, synthesizeSpeech, previewVoice } from "./src/tools/speechSynthesis.js";
 import {
@@ -444,17 +445,25 @@ async function handleApi(req, res, pathname) {
     }
     const userMessageId = store.addMessage({ sessionId, role: "user", content: message });
     const ragStartedAt = Date.now();
-    const retrievedMemories = store.retrieveMemories(message, { limit: 8, agentId: agent.id });
-    const memory = store.getMemorySnapshot({ agentId: agent.id });
     const history = store.getRecentMessages(sessionId, 14).map((item) => ({
       role: item.role,
       content: item.content
     }));
+    const { retrievedMemories, retrievalPlan } = runCragRetrieval({
+      store,
+      agentId: agent.id,
+      message,
+      history,
+      limit: 8
+    });
+    const memory = store.getMemorySnapshot({ agentId: agent.id });
     traceLog(traceId, "chat.context_ready", {
       elapsedMs: Date.now() - ragStartedAt,
       agentId: agent.id,
       historyCount: history.length,
       retrievedCount: retrievedMemories.length,
+      retrievalQuality: retrievalPlan.quality,
+      strictEvidence: retrievalPlan.strictEvidence,
       personaCorpusItems: memory.persona_corpus?.length || 0
     });
 
@@ -465,6 +474,7 @@ async function handleApi(req, res, pathname) {
         character,
         memory,
         retrievedMemories,
+        retrievalPlan,
         message,
         history,
         llm: {
@@ -517,6 +527,7 @@ async function handleApi(req, res, pathname) {
       reply: turn.reply,
       orchestration: turn.orchestration,
       retrievedMemories,
+      retrievalPlan,
       quota
     }));
     });
@@ -787,7 +798,7 @@ function maybeCompressConversation(sessionId, agentId = sessionId) {
   });
 }
 
-function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orchestration, retrievedMemories, quota }) {
+function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orchestration, retrievedMemories, retrievalPlan, quota }) {
   const outputs = orchestration?.outputs || [];
   const hasVoiceOutput = outputs.some((output) => output.type === "voice");
   const hasTextOutput = outputs.some((output) => output.type === "text");
@@ -851,6 +862,7 @@ function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orc
     agent,
     memory: store.getMemorySnapshot({ agentId: agent.id }),
     retrieved_memories: retrievedMemories,
+    retrieval_plan: retrievalPlan,
     compression,
     quota: commitChatAccess(quota),
     saved,

@@ -885,6 +885,60 @@ export class CompanionStore {
     return scored;
   }
 
+  scanMemories({ terms = [], limit = 40, agentId = "" } = {}) {
+    const agentFilter = String(agentId || "").trim();
+    const cleanTerms = [...new Set((Array.isArray(terms) ? terms : [])
+      .map((term) => String(term || "").trim())
+      .filter((term) => term.length >= 2))]
+      .slice(0, 12);
+    if (!cleanTerms.length) return [];
+
+    const rows = this.db.prepare(`
+      SELECT
+        c.id AS chunkId,
+        c.memory_id AS memoryId,
+        c.content,
+        c.embedding_json AS embeddingJson,
+        m.kind,
+        m.importance,
+        m.confidence,
+        m.created_at AS createdAt,
+        m.updated_at AS updatedAt,
+        0 AS ftsScore
+      FROM memory_chunks c
+      JOIN memories m ON m.id = c.memory_id
+      WHERE m.status = 'active'
+        AND (? = '' OR json_extract(m.metadata_json, '$.agentId') = ? OR json_extract(m.metadata_json, '$.sessionId') = ?)
+      ORDER BY m.pinned DESC, m.importance DESC, m.updated_at DESC
+      LIMIT 1000
+    `).all(agentFilter, agentFilter, agentFilter);
+
+    const queryText = cleanTerms.join(" ");
+    const queryEmbedding = embedText(queryText);
+    return rows
+      .map((row) => {
+        const hitCount = cleanTerms.reduce((sum, term) => sum + (String(row.content || "").includes(term) ? 1 : 0), 0);
+        if (!hitCount) return null;
+        const semanticScore = cosineSimilarity(queryEmbedding, safeJson(row.embeddingJson, []));
+        return {
+          memoryId: row.memoryId,
+          chunkId: row.chunkId,
+          kind: row.kind,
+          content: row.content,
+          score: Number(Math.min(1, 0.18 + (hitCount * 0.08) + (semanticScore * 0.25)).toFixed(4)),
+          semanticScore: Number(semanticScore.toFixed(4)),
+          ftsScore: Number(Math.min(1, hitCount / cleanTerms.length).toFixed(4)),
+          importance: row.importance,
+          confidence: row.confidence,
+          updatedAt: row.updatedAt,
+          scanHits: hitCount
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => (right.scanHits - left.scanHits) || (right.score - left.score))
+      .slice(0, limit);
+  }
+
   getMemorySnapshot({ perKind = 8, agentId = "" } = {}) {
     const profile = this.getProfile();
     const agentFilter = String(agentId || "").trim();

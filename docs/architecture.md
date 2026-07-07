@@ -1,12 +1,12 @@
 ﻿# 技术架构与 Agent 编排
 
-本文档是当前项目的技术架构说明，覆盖客户端、授权后端、模型通道、Agent 编排、数据存储、接口链路、测试与后续演进。
+本文档是项目的技术架构说明，覆盖客户端、托管授权服务、模型通道、Agent 编排、数据存储、接口链路、测试与演进路线。
 
-当前系统由两个主要运行系统组成：
+系统由两个主要运行系统组成：
 
 ```text
 open-source-client  客户端 / 本地 Agent 运行时
-license-backend     私有授权后端 / 模型中转网关
+license-backend     托管授权服务 / 模型中转网关
 ```
 
 ## 1. 总体架构
@@ -25,7 +25,7 @@ license-backend     私有授权后端 / 模型中转网关
       -> 本地 SQLite
       -> 图片 / 语音工具
       -> 模型通道选择
-        -> 官方授权后端 license-backend
+        -> 托管授权服务 license-backend
           -> StepFun API
         -> 自部署 OpenAI-compatible / StepFun API
 ```
@@ -34,7 +34,7 @@ license-backend     私有授权后端 / 模型中转网关
 
 ```text
 客户端负责体验、角色、记忆和 Agent 编排。
-授权后端负责账号、授权码、额度、API Key 隔离和 StepFun 中转。
+托管授权服务负责账号、授权码、额度、API Key 隔离和 StepFun 中转。
 ```
 
 ## 2. 仓库边界
@@ -66,7 +66,7 @@ docs/architecture.md              本文档
 
 ### license-backend
 
-私有授权后端。不要开源。包含：
+托管授权服务是独立部署组件，包含：
 
 - 账号注册、登录、重置密码。
 - 授权码生成、绑定、禁用、恢复。
@@ -79,7 +79,7 @@ docs/architecture.md              本文档
 ```text
 license-server.js                 授权服务与管理后台
 license-admin.js                  授权码 CLI 管理
-data/licenses.json                当前 MVP 授权数据
+data/licenses.json                文件型授权数据
 data/backups/                     授权数据自动备份
 ```
 
@@ -92,12 +92,12 @@ data/backups/                     授权数据自动备份
 客户端按优先级选择模型通道：
 
 ```text
-官方账号 token / 授权码绑定 > 自部署 API Key > 免费体验模式
+官方账号 / 授权码绑定 > 自部署 API Key > 免费体验模式
 ```
 
-### 官方授权模式
+### 托管授权模式
 
-普通用户默认走这个模式。
+普通用户默认使用该模式。
 
 ```text
 客户端本地 /api/chat
@@ -107,9 +107,9 @@ data/backups/                     授权数据自动备份
 
 特点：
 
-- 用户不用接触模型 API Key。
-- 客户端只保存官方用户 token 或授权绑定状态。
-- StepFun API Key 只存在授权后端。
+- 用户侧无需接触模型 API Key。
+- 客户端保存用户登录状态或授权绑定状态。
+- StepFun API Key 由托管授权服务持有。
 - 文字、图片、语音、声音克隆统一计入授权额度。
 
 ### 自部署模式
@@ -136,16 +136,16 @@ Audio Base URL / Audio Model / Audio API Key
 
 - 用户自行承担模型费用。
 - 客户端本地后端直接调用用户配置的 OpenAI-compatible 或 StepFun API。
-- 不经过官方授权后端。
+- 直接连接用户配置的模型服务。
 
 ### 免费体验模式
 
 未配置官方授权或自部署 API Key 时进入。
 
-当前设计上分两类：
+免费体验分为两类：
 
-- 登录后的新用户免费额度：由授权后端按用户 token 统计。
-- 公共免费体验：由 `COMPANION_PUBLIC_FREE_ACCESS=1` 控制，默认不建议生产开放。
+- 登录后的新用户免费额度：由托管授权服务按用户身份统计。
+- 公共免费体验：由 `COMPANION_PUBLIC_FREE_ACCESS=1` 控制。
 
 ## 4. 客户端内部架构
 
@@ -182,13 +182,11 @@ public/styles.css
 - 消费后端返回的 `orchestration.outputs`。
 - 根据后端计划触发 `/api/image` 和 `/api/tts`。
 
-前端不再负责：
+后端编排层负责：
 
 - 判断本轮应该输出文字、图片还是语音。
 - 构造核心图片 prompt。
 - 决定语音情绪演绎。
-
-这些已经收回到后端 `src/orchestrator/`。
 
 ### 本地 API 层
 
@@ -198,17 +196,17 @@ public/styles.css
 server.js
 ```
 
-当前仍是单体入口，职责包括：
+本地 API 入口职责包括：
 
 - HTTP 路由。
 - 静态文件服务。
 - 角色、配置、消息 API。
 - 聊天回合处理。
 - 图片、语音、声音克隆工具 API。
-- 官方授权后端代理。
+- 托管授权服务代理。
 - 自部署模型调用。
 
-后续拆分目标：
+服务拆分目标：
 
 ```text
 routes/       HTTP 路由与参数校验
@@ -316,7 +314,7 @@ POST /api/chat
      - 写入记忆候选
      - 写入 turn summary
      - 必要时写入 safety_note
-     - 必要时压缩旧消息
+     - 按配置压缩历史消息
   8. 返回 reply / orchestration / memory / quota
 ```
 
@@ -425,31 +423,31 @@ FTS5 keyword score
 + recency
 ```
 
-当前实现是轻量本地 RAG，适合 MVP。后续如果要支持大语料、跨设备同步、多人共享角色，可以升级为：
+当前实现是轻量本地 RAG，适合单机与桌面场景。面向大语料、跨设备同步或多人共享角色场景，可以升级为：
 
 - SQLite vector extension。
 - 服务端向量库。
 - Postgres + pgvector。
 
-## 10. 授权后端架构
+## 10. 托管授权服务架构
 
-当前授权后端入口：
+授权服务入口：
 
 ```text
 license-backend/license-server.js
 ```
 
-当前数据存储：
+默认数据存储：
 
 ```text
 license-backend/data/licenses.json
 ```
 
-当前功能：
+核心能力：
 
 - 邮箱验证码。
 - 注册、登录、重置密码。
-- 用户 token。
+- 用户访问令牌。
 - 授权码生成。
 - 授权码绑定用户。
 - 授权码禁用 / 恢复。
@@ -457,12 +455,12 @@ license-backend/data/licenses.json
 - 月额度。
 - StepFun Chat / Image / TTS / Voice Clone 中转。
 - 管理后台。
-- 基础安全防护：强管理员 token、CORS 白名单、请求体大小限制、内存限流。
+- 基础安全防护：强管理凭证、CORS 白名单、请求体大小限制、内存限流。
 
 ### 授权链路
 
 ```text
-客户端保存 officialUserToken
+客户端保存用户访问令牌
   -> Authorization: Bearer vc_user_xxx
     -> license-backend 查找用户
       -> 如果绑定授权码，使用授权码额度
@@ -471,44 +469,44 @@ license-backend/data/licenses.json
         -> 成功后 recordUsage()
 ```
 
-默认不允许直接用 `vc_live_xxx` 授权码调用模型接口。兼容旧模式时才开启：
+默认通过用户账号访问模型中转接口。授权码直连能力通过显式配置开启：
 
 ```env
 LICENSE_ALLOW_DIRECT_KEYS=1
 ```
 
-### 生产升级建议
+### 部署建议
 
-授权后端已经具备第一层上线前防护：
+授权服务包含基础安全防护：
 
-- `LICENSE_ADMIN_TOKEN` 必须至少 24 位，不能留空，不能使用 `dev-admin` 或示例值。
-- 管理员 token 使用常量时间比较。
+- `LICENSE_ADMIN_TOKEN` 要求至少 24 位，建议使用长随机密钥，并避免空值、默认值或示例值。
+- 管理凭证使用常量时间比较。
 - `LICENSE_CORS_ORIGINS` 控制允许访问授权网关的前端来源。
 - `LICENSE_REQUEST_BODY_LIMIT_BYTES` 限制请求体大小，默认 2MB。
 - `LICENSE_RATE_LIMIT_*` 提供内存级基础限流。
-- `/api/health` 不再暴露 StepFun baseUrl，只返回安全配置状态。
-- `LICENSE_ALLOW_DIRECT_KEYS` 默认保持 `0`，不允许直接用 `vc_live_xxx` 调模型接口。
+- `/api/health` 返回安全配置状态，不暴露 StepFun baseUrl。
+- `LICENSE_ALLOW_DIRECT_KEYS` 默认保持 `0`，授权码直连能力保持关闭。
 
-这些防护适合本地开发、小范围内测和初期部署，但还不是完整生产安全体系。JSON 文件仍只适合 MVP，不适合生产并发。建议升级为 SQLite 或 Postgres。
+面向正式部署时，建议将文件型存储升级为 SQLite 或 Postgres，并将内存限流升级为可多实例共享的限流能力。
 
 建议表结构：
 
 | 表 | 作用 |
 | --- | --- |
-| `users` | 账号、密码 hash、token hash、状态 |
+| `users` | 账号、密码 hash、访问令牌 hash、状态 |
 | `licenses` | 授权码 hash、套餐、额度、过期时间、状态 |
 | `license_bindings` | 用户与授权码绑定关系 |
 | `usage_events` | 每次成功中转的审计与计费事件 |
 | `rate_limits` | IP / 用户 / 授权身份限流 |
 | `admin_audit_logs` | 管理后台操作审计 |
 
-生产加固优先级：
+部署演进优先级：
 
 1. 用数据库事务记录用量，避免并发超额。
 2. 将内存限流升级为 Redis / 数据库限流，支持多实例部署。
-3. 管理后台从单 token 升级为登录会话。
+3. 管理后台从单管理密钥升级为登录会话。
 4. 增加审计日志。
-5. SMTP、StepFun API Key、管理员密钥全部只放服务端环境。
+5. SMTP、StepFun API Key、管理员密钥全部保存在服务端环境。
 
 ## 11. 配置项
 
@@ -544,7 +542,7 @@ STEPFUN_IMAGE_MODEL=step-image-edit-2
 STEPFUN_AUDIO_MODEL=stepaudio-2.5-tts
 ```
 
-### 授权后端
+### 托管授权服务
 
 文件：
 
@@ -593,7 +591,7 @@ STEPFUN_AUDIO_MODEL=stepaudio-2.5-tts
 | `GET /api/memories/search` | 记忆搜索 |
 | `POST /api/memory/reset` | 清空本地记忆 |
 
-### 授权后端 API
+### 托管授权服务 API
 
 | API | 作用 |
 | --- | --- |
@@ -612,14 +610,14 @@ STEPFUN_AUDIO_MODEL=stepaudio-2.5-tts
 
 ## 13. 安全边界
 
-必须遵守：
+安全边界：
 
 - 浏览器前端不保存 StepFun API Key。
-- 普通用户模式下，StepFun API Key 只存在 `license-backend/.env`。
-- 客户端开源仓库不能提交生产 `.env`、授权数据、管理员 token。
-- 自部署 API Key 只给明确开启 `COMPANION_SELF_HOSTED=1` 的专业玩家使用。
-- 授权后端必须使用强 `LICENSE_ADMIN_TOKEN`，并限制 `LICENSE_CORS_ORIGINS`。
-- 授权后端入口必须保留请求体大小限制和限流策略。
+- 普通用户模式下，StepFun API Key 保存在托管授权服务环境中。
+- 部署 `.env`、授权数据、管理密钥和访问令牌属于运行环境资产。
+- 自部署 API Key 仅在 `COMPANION_SELF_HOSTED=1` 时启用。
+- 托管授权服务使用强 `LICENSE_ADMIN_TOKEN`，并限制 `LICENSE_CORS_ORIGINS`。
+- 托管授权服务入口保留请求体大小限制和限流策略。
 - 自伤、自杀等危机表达优先进入安全回复，不触发语音娱乐化输出。
 - 医疗、法律、金融等高风险话题只做信息整理和边界提醒。
 
@@ -633,7 +631,7 @@ npm start
 npm test
 ```
 
-授权后端：
+托管授权服务：
 
 ```powershell
 cd license-backend
@@ -652,7 +650,7 @@ http://localhost:8787/admin
 http://localhost:5177
 ```
 
-当前测试覆盖：
+测试覆盖：
 
 - Router Agent 输出规划。
 - 不可用能力时不规划图片/语音。
@@ -660,30 +658,27 @@ http://localhost:5177
 - Voice Agent 情绪识别。
 - RAG 中文切词和相似度。
 
-## 15. 当前已完成的架构整理
+## 15. 实现概览
 
-已完成：
+核心实现：
 
-- 新增 `src/orchestrator/`。
+- 后端 Agent 编排入口为 `src/orchestrator/`。
 - `/api/chat` 返回统一 `orchestration.outputs`。
-- 前端停止核心输出路由和 prompt 构造。
-- 删除旧前端 `public/routerAgent.js`。
-- 新增 `npm test` 和最小测试。
-- 授权后端完成第一轮安全加固：强管理员 token、CORS 白名单、body limit、内存限流。
+- 前端消费后端输出计划，并按计划触发图片和语音工具。
+- `npm test` 覆盖 Agent 路由、语音情绪和 RAG 基础逻辑。
+- 托管授权服务包含强管理凭证、CORS 白名单、body limit、内存限流等基础安全防护。
 
-仍待完成：
+维护与演进方向：
 
-- 全仓中文乱码修复，统一 UTF-8。
+- 文档、配置模板和示例资产统一使用 UTF-8 编码。
 - 将 `server.js` 拆分到 `routes/`、`services/`、`gateways/`、`policies/`。
-- 授权后端从 JSON 文件升级 SQLite 或 Postgres，并把内存限流升级为可多实例共享的限流。
-- 补授权额度、网关 mock、端到端 smoke test。
+- 授权服务存储从 JSON 文件升级 SQLite 或 Postgres，并把内存限流升级为可多实例共享的限流。
+- 完善授权额度、网关 mock、端到端 smoke test。
 - 建立 CI。
 
 ## 16. 演进路线
 
 ### Phase 1: 编排中心化
-
-状态：已启动。
 
 - 后端拥有 Agent 编排权。
 - 前端只消费输出计划。
@@ -709,7 +704,7 @@ server.js
 4. `memoryService`
 5. `agentService`
 
-### Phase 3: 授权后端生产化
+### Phase 3: 托管授权服务部署增强
 
 目标：
 

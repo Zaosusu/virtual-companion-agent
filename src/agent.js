@@ -23,7 +23,7 @@ const workflowMap = [
   { workflow: "daily_checkin", re: /早安|晚安|打卡|签到|陪我|在吗/ }
 ];
 
-export async function createCompanionReply({ character, memory, retrievedMemories = [], contextPlan = null, message, history, llm, traceId = "" }) {
+export async function createCompanionReply({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history, llm, traceId = "" }) {
   const safety = detectSafety(message);
   const capability = detectCapabilityRequest(message);
 
@@ -67,7 +67,7 @@ export async function createCompanionReply({ character, memory, retrievedMemorie
 
   if (llm?.apiKey && llm?.baseUrl && llm?.model) {
     try {
-      const text = await callRemoteModel({ character, memory, retrievedMemories, contextPlan, message, history, llm, safety, traceId });
+      const text = await callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId });
       return {
         text,
         mood: detectMood(message),
@@ -387,8 +387,8 @@ function unique(items) {
   return [...new Set(items)];
 }
 
-async function callRemoteModel({ character, memory, retrievedMemories, contextPlan, message, history, llm, safety, traceId = "" }) {
-  const messages = buildRemoteMessages({ character, memory, retrievedMemories, contextPlan, message, history, llm, safety });
+async function callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId = "" }) {
+  const messages = buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety });
   const startedAt = Date.now();
   logTrace(traceId, "text_agent.request", {
     mode: llm.mode,
@@ -423,7 +423,7 @@ async function callRemoteModel({ character, memory, retrievedMemories, contextPl
   return text;
 }
 
-function buildRemoteMessages({ character, memory, retrievedMemories, contextPlan, message, history, llm, safety }) {
+function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety }) {
   const userSystemPrompt = String(character.runtime_config?.systemPrompt || "").trim();
   const userPersona = String(character.persona || "").trim();
   const userVoiceStyle = String(character.voice?.style || "").trim();
@@ -453,6 +453,7 @@ function buildRemoteMessages({ character, memory, retrievedMemories, contextPlan
     "只有当用户要求现实身份验证、现实线下行动、金钱交易、法律承诺、医疗建议，或要求证明现实身份时，才温和说明边界。",
     "如果用户正在用逝去亲人的资料做角色，要温柔承接怀念和哀伤，但避免制造依赖或替代现实哀悼支持。",
     "人物资料库必须先经过 context_agent 的身份归属判断再使用。不要自行把 blockedFacts 恢复成事实。",
+    formatEvidenceInstruction(retrievalPlan),
     llm.imageOutputAvailable ? "当前配置声明支持图片输出。" : "当前配置未声明图片输出能力。",
     safety.level === "bounded" ? "当前话题涉及高风险领域，请明确边界，转向整理信息和建议咨询专业人士。" : "",
     `context_agent 身份归属结果：${JSON.stringify(formatContextPlan(contextPlan, memory, retrievedMemories), null, 2).slice(0, 3200)}`
@@ -490,6 +491,23 @@ function formatContextPlan(contextPlan, memory, retrievedMemories) {
     blockedFacts: [],
     warnings: ["context_agent 未运行，使用保守上下文。"]
   };
+}
+
+function formatEvidenceInstruction(retrievalPlan) {
+  if (!retrievalPlan) return "";
+  const lines = [
+    `memory_agent/CRAG：原始问题="${retrievalPlan.originalQuery || ""}"，改写检索="${retrievalPlan.rewrittenQuery || ""}"，证据质量=${retrievalPlan.quality || "unknown"}，可用证据=${retrievalPlan.evidenceCount || 0}条。`
+  ];
+  if (retrievalPlan.strictEvidence) {
+    lines.push(
+      "本轮是严格证据模式：用户在追问具体事实/奖项/时间/地点/数量/经历时，只能使用 context_agent.characterFacts 中明确出现的事实。",
+      "不要把目录、口头禅、语气风格、价值观、上一轮 assistant 编过的内容当事实证据。",
+      "如果资料库证据不足，必须用角色口吻说明“我这边资料库里没查到更具体记录/不敢乱说”，可以给出已确认的少量事实，并询问用户是否要导入更完整资料。"
+    );
+  } else {
+    lines.push("可以自然聊天，但涉及具体事实时仍然不要补不存在的时间、地点、奖项、金额、人物评价。");
+  }
+  return lines.join("\n");
 }
 
 function formatUserMemory(memory = {}) {

@@ -9,6 +9,7 @@ export async function orchestrateCompanionTurn({
   character,
   memory,
   retrievedMemories = [],
+  retrievalPlan = null,
   message,
   history = [],
   llm,
@@ -20,6 +21,7 @@ export async function orchestrateCompanionTurn({
     character,
     memory,
     retrievedMemories,
+    retrievalPlan,
     message,
     history,
     llm,
@@ -58,6 +60,7 @@ export async function orchestrateCompanionTurn({
       router,
       agents: {
         context_agent: summarizeContextAgent(contextPlan),
+        memory_agent: summarizeMemoryAgent(retrievalPlan),
         text_agent: { enabled: true, source: reply.source || "local" },
         image_agent: router.imageAgent,
         voice_agent: router.voiceAgent,
@@ -65,6 +68,17 @@ export async function orchestrateCompanionTurn({
       },
       outputs
     }
+  };
+}
+
+function summarizeMemoryAgent(retrievalPlan) {
+  return {
+    enabled: Boolean(retrievalPlan),
+    quality: retrievalPlan?.quality || "unknown",
+    strictEvidence: Boolean(retrievalPlan?.strictEvidence),
+    rewrittenQuery: retrievalPlan?.rewrittenQuery || "",
+    evidenceCount: retrievalPlan?.evidenceCount || 0,
+    rejectedCount: retrievalPlan?.rejectedCount || 0
   };
 }
 
