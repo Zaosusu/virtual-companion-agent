@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>角色智能体工作台</title>
+    <link rel="stylesheet" href="/public/styles.css" />
+  </head>
+  <body>
+    <button class="edge-toggle edge-left" id="toggleLeftPanel" type="button" aria-label="显示或隐藏角色列表" title="显示或隐藏角色列表">角色</button>
+    <button class="edge-toggle edge-right" id="toggleRightPanel" type="button" aria-label="显示或隐藏配置面板" title="显示或隐藏配置面板">配置</button>
+
+    <main class="app-shell">
+      <aside class="left-rail" id="leftRail" aria-label="角色列表">
+        <button class="panel-toggle collapsed-toggle left-toggle" id="showLeftPanel" type="button" aria-label="显示角色列表" title="显示角色列表">›</button>
+        <header class="brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <h1>角色智能体</h1>
+            <p>角色、记忆和多模态陪伴</p>
+          </div>
+          <button class="panel-toggle" id="hideLeftPanel" type="button" aria-label="隐藏角色列表" title="隐藏角色列表">‹</button>
+        </header>
+
+        <div class="rail-actions">
+          <button id="newAgentButton" type="button">新建角色</button>
+          <button id="cloneAgentButton" type="button">复制当前</button>
+        </div>
+
+        <div class="agent-list" id="agentList"></div>
+      </aside>
+
+      <section class="chat-panel" aria-label="聊天">
+        <header class="topbar">
+          <div class="avatar" id="agentAvatar" aria-hidden="true">沫</div>
+          <div>
+            <h2 id="agentTitle">沫里</h2>
+            <p id="status">正在载入角色...</p>
+          </div>
+          <div class="mode-pill" id="modePill">agent</div>
+          <button class="ghost compact-action" id="openAuthButton" type="button">注册/登录</button>
+          <button class="ghost compact-action" id="clearChatButton" type="button">清空聊天</button>
+        </header>
+
+        <div class="quick-actions" id="quickActions" aria-label="快捷提示"></div>
+        <div class="messages" id="messages" aria-live="polite"></div>
+
+        <form class="composer" id="composer">
+          <textarea id="messageInput" rows="1" placeholder="跟角色说点什么..." autocomplete="off"></textarea>
+          <button type="submit">发送</button>
+        </form>
+      </section>
+
+      <aside class="side-panel" id="sidePanel" aria-label="配置与记忆">
+        <button class="panel-toggle collapsed-toggle right-toggle" id="showRightPanel" type="button" aria-label="显示配置面板" title="显示配置面板">‹</button>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>授权</h2>
+            <div class="section-actions">
+              <span id="modelConfigStatus">免费体验模式</span>
+              <button class="panel-toggle" id="hideRightPanel" type="button" aria-label="隐藏配置面板" title="隐藏配置面板">›</button>
+            </div>
+          </div>
+          <form class="config-form" id="modelConfigForm">
+                        <div class="subform official-license-block">
+              <strong>&#37038;&#31665;&#36134;&#21495;</strong>
+              <p class="form-hint">&#22635;&#20889;&#37038;&#31665;&#33719;&#21462;&#39564;&#35777;&#30721;&#65292;&#29992;&#39564;&#35777;&#30721;&#27880;&#20876;&#36134;&#21495;&#25110;&#37325;&#32622;&#23494;&#30721;&#12290;</p>
+              <div class="auth-tabs" role="tablist" aria-label="账号操作">
+                <button class="active" id="authLoginTab" type="button">登录</button>
+                <button id="authRegisterTab" type="button">注册</button>
+                <button id="authResetTab" type="button">重置密码</button>
+              </div>
+              <label>
+                <span>&#37038;&#31665;</span>
+                <input id="authAccount" type="email" placeholder="name@example.com" autocomplete="email" />
+              </label>
+              <label class="auth-code-field">
+                <span>&#39564;&#35777;&#30721;</span>
+                <span class="inline-input-action">
+                  <input id="authCode" type="text" inputmode="numeric" maxlength="6" placeholder="6 &#20301;&#39564;&#35777;&#30721;" autocomplete="one-time-code" />
+                  <button class="secondary subtle-action" id="sendCodeButton" type="button">&#21457;&#36865;</button>
+                </span>
+              </label>
+              <label>
+                <span>&#23494;&#30721;</span>
+                <input id="authPassword" type="password" placeholder="&#33267;&#23569; 6 &#20301;" autocomplete="current-password" />
+              </label>
+              <div class="auth-primary-actions">
+                <button id="loginButton" type="button">&#30331;&#24405;</button>
+                <button class="secondary" id="registerButton" type="button">&#27880;&#20876;</button>
+                <button class="secondary" id="resetPasswordButton" type="button">&#37325;&#32622;&#23494;&#30721;</button>
+              </div>
+              <div class="auth-meta-row">
+                <p id="authStatus" class="form-hint">&#26410;&#30331;&#24405;&#12290;</p>
+                <button class="text-action" id="logoutButton" type="button">&#36864;&#20986;</button>
+              </div>
+            </div>
+<div class="subform official-license-block">
+              <strong>授权码</strong>
+              <p class="form-hint">请先注册或登录账号，再把购买到的授权码绑定到这个账号。</p>
+              <label>
+                <span>授权码</span>
+                <input id="officialLicenseKey" type="password" placeholder="输入授权码" autocomplete="off" />
+              </label>
+              <label class="toggle-row">
+                <input id="clearOfficialLicenseKey" type="checkbox" />
+                <span>清除已保存授权码</span>
+              </label>
+              <div class="button-row two">
+                <button type="submit">绑定授权码</button>
+                <button class="secondary" id="testTtsButton" type="button">试听语音</button>
+              </div>
+            </div>
+
+            <p id="modelConfigHint" class="form-hint">授权码只保存在本机 SQLite。</p>
+          </form>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>体验设置</h2>
+            <span id="experienceStatus">自动保存</span>
+          </div>
+          <div class="config-form">
+            <label>
+              <span>图片风格</span>
+              <select id="experienceImageStyle">
+                <option value="realistic">真人风格</option>
+                <option value="anime">二次元风格</option>
+              </select>
+            </label>
+            <div class="form-grid">
+              <label>
+                <span>声音类型</span>
+                <select id="agentVoiceGender">
+                  <option value="girl">少女感</option>
+                  <option value="female">温柔女声</option>
+                  <option value="mature_female">成熟女声</option>
+                  <option value="boy">少年感</option>
+                  <option value="male">青年男声</option>
+                  <option value="deep_male">低沉男声</option>
+                  <option value="neutral">中性清亮</option>
+                  <option value="neutral_calm">中性沉稳</option>
+                </select>
+              </label>
+              <label>
+                <span>声音感觉</span>
+                <select id="agentVoiceTone">
+                  <option value="warm">温暖</option>
+                  <option value="bright">明亮</option>
+                  <option value="calm">沉稳</option>
+                  <option value="energetic">元气</option>
+                  <option value="soft">轻柔</option>
+                </select>
+              </label>
+            </div>
+            <div class="reference-upload">
+              <label>
+                <span>克隆声音样本</span>
+                <input id="voiceCloneInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,.mp3,.wav" />
+              </label>
+              <label>
+                <span>样本文本</span>
+                <textarea id="voiceSampleText" rows="2" placeholder="可选：填入这段录音里实际说的话，克隆会更稳"></textarea>
+              </label>
+              <div class="reference-preview compact" id="voiceClonePreview">
+                <span>未上传声音样本</span>
+              </div>
+              <div class="button-row two">
+                <button class="secondary" id="cloneVoiceButton" type="button">克隆声音</button>
+                <button class="secondary" id="clearClonedVoiceButton" type="button">清除克隆</button>
+              </div>
+              <p class="form-hint">建议录 6 到 9 秒清晰人声，开头结尾少留空白；服务端会按有效人声时长校验。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>角色配置</h2>
+            <span id="agentConfigStatus">已加载</span>
+          </div>
+          <form class="config-form" id="agentConfigForm">
+            <div class="form-grid">
+              <label>
+                <span>角色 ID</span>
+                <input id="agentId" type="text" />
+              </label>
+              <label>
+                <span>头像字</span>
+                <input id="agentAvatarInput" type="text" maxlength="2" />
+              </label>
+            </div>
+            <label>
+              <span>角色名</span>
+              <input id="agentName" type="text" />
+            </label>
+            <label>
+              <span>一句话卖点</span>
+              <input id="agentTagline" type="text" />
+            </label>
+            <label>
+              <span>人设</span>
+              <textarea id="agentPersona" rows="4"></textarea>
+            </label>
+            <label>
+              <span>外貌特征</span>
+              <textarea id="agentAppearance" rows="4" placeholder="例如：长发、圆眼、清冷感、常穿浅色针织衫、自然日常妆"></textarea>
+            </label>
+            <div class="reference-upload compact-upload">
+              <label>
+                <span>从图片识别外貌</span>
+                <input id="appearanceImageInput" type="file" accept="image/png,image/jpeg,image/webp" />
+              </label>
+              <button class="secondary" id="analyzeAppearanceButton" type="button">识别并填入</button>
+              <p class="form-hint" id="appearanceAnalyzeStatus">上传一张清晰正面或半身图，可自动生成外貌描述。</p>
+            </div>
+            <label>
+              <span>语气风格</span>
+              <textarea id="agentVoiceStyle" rows="3"></textarea>
+            </label>
+            <label>
+              <span>关系定位</span>
+              <textarea id="agentRelationship" rows="3"></textarea>
+            </label>
+            <label>
+              <span>开场白</span>
+              <textarea id="agentOpening" rows="3"></textarea>
+            </label>
+            <label>
+              <span>系统提示词</span>
+              <textarea id="agentSystemPrompt" rows="7"></textarea>
+            </label>
+            <label>
+              <span>默认视觉场景</span>
+              <textarea id="agentVisualContext" rows="3" placeholder="例如：排练室、后台化妆间、剧场走廊"></textarea>
+            </label>
+            <div class="reference-upload">
+              <label>
+                <span>角色参考图</span>
+                <input id="agentReferenceImageInput" type="file" accept="image/png,image/jpeg,image/webp" />
+              </label>
+              <div class="reference-preview" id="agentReferencePreview">
+                <span>未上传参考图</span>
+              </div>
+              <button class="secondary" id="clearReferenceImageButton" type="button">清除参考图</button>
+              <p class="form-hint">她以后发自拍时，会尽量照着这张图保持脸型、发型和整体感觉。</p>
+            </div>
+            <label>
+              <span>预设问题，每行一条</span>
+              <textarea id="agentPrompts" rows="4"></textarea>
+            </label>
+            <label>
+              <span>边界规则，每行一条</span>
+              <textarea id="agentBoundaries" rows="4"></textarea>
+            </label>
+            <label>
+              <span>安全规则，每行一条</span>
+              <textarea id="agentSafetyRules" rows="4"></textarea>
+            </label>
+            <div class="button-row">
+              <button type="submit">保存角色</button>
+              <button class="secondary" id="exportAgentButton" type="button">导出</button>
+              <button class="danger" id="deleteAgentButton" type="button">删除</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>导入角色包</h2>
+          </div>
+          <form class="config-form" id="importForm">
+            <textarea id="importText" rows="5" placeholder="粘贴导出的 JSON 角色包"></textarea>
+            <button type="submit">导入并切换</button>
+          </form>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>人物资料库</h2>
+            <span id="personaCorpusStatus">未导入</span>
+          </div>
+          <form class="config-form" id="personaCorpusForm">
+            <label>
+              <span>资料文件</span>
+              <input id="personaCorpusFile" type="file" multiple accept=".txt,.md,.srt,.vtt,.json,.csv,.log,text/plain,text/markdown,text/csv,application/json" />
+            </label>
+            <label>
+              <span>资料文件夹</span>
+              <input id="personaCorpusFolder" type="file" webkitdirectory directory multiple />
+            </label>
+            <label>
+              <span>资料关系</span>
+              <select id="personaCorpusRelation">
+                <option value="public_persona">公开直播/视频转写</option>
+                <option value="personal_memory">私人回忆/聊天记录</option>
+                <option value="memorial">纪念亲友资料</option>
+                <option value="fictional">虚构角色设定</option>
+              </select>
+            </label>
+            <label>
+              <span>粘贴文本</span>
+              <textarea id="personaCorpusText" rows="6" placeholder="可以粘贴直播转写、聊天记录、日记、访谈稿。系统会提取说话习惯、口头禅、价值观和人物事实。"></textarea>
+            </label>
+            <button type="submit">导入人物资料</button>
+            <p class="form-hint">用于让角色更接近资料里的表达习惯和稳定记忆；不会把角色声明成真实本人。</p>
+          </form>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>长期记忆</h2>
+            <button class="ghost" id="resetMemory" type="button">清空</button>
+          </div>
+          <div class="memory-list" id="memoryList"></div>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
+            <h2>RAG 召回</h2>
+            <span id="ragStatus">0</span>
+          </div>
+          <div class="memory-list" id="ragList"></div>
+        </section>
+      </aside>
+    </main>
+
+    <template id="messageTemplate">
+      <article class="message">
+        <div class="message-meta"></div>
+        <div class="message-body"></div>
+        <button class="message-delete" type="button" title="删除">删除</button>
+      </article>
+    </template>
+
+    <script type="module" src="/public/app.js"></script>
+  </body>
+</html>

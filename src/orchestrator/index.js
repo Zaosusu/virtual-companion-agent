@@ -1,0 +1,115 @@
+import { buildImageOutputPlan } from "./imageAgent.js";
+import { runContextAgent } from "./contextAgent.js";
+import { buildVoiceOutputPlan } from "./voiceAgent.js";
+import { routeAgentTurn } from "./routerAgent.js";
+import { runTextAgent } from "./textAgent.js";
+
+export async function orchestrateCompanionTurn({
+  agent,
+  character,
+  memory,
+  retrievedMemories = [],
+  message,
+  history = [],
+  llm,
+  modelConfig,
+  traceId = ""
+}) {
+  const contextPlan = await runContextAgent({
+    agent,
+    character,
+    memory,
+    retrievedMemories,
+    message,
+    history,
+    llm,
+    traceId
+  });
+  const textResult = await runTextAgent({
+    character,
+    memory,
+    retrievedMemories,
+    contextPlan,
+    message,
+    history,
+    llm,
+    traceId
+  });
+  const reply = textResult.reply;
+  const router = routeAgentTurn({
+    userText: message,
+    reply,
+    modelConfig
+  });
+  const outputs = await buildOutputPlan({
+    agent,
+    character,
+    reply,
+    router,
+    userText: message,
+    history,
+    llm
+  });
+
+  return {
+    reply,
+    orchestration: {
+      version: "orchestrator-v1",
+      router,
+      agents: {
+        context_agent: summarizeContextAgent(contextPlan),
+        text_agent: { enabled: true, source: reply.source || "local" },
+        image_agent: router.imageAgent,
+        voice_agent: router.voiceAgent,
+        review_agent: summarizeReviewAgent(outputs)
+      },
+      outputs
+    }
+  };
+}
+
+function summarizeContextAgent(contextPlan) {
+  return {
+    enabled: true,
+    reviewer: contextPlan?.reviewer || "unknown",
+    characterFacts: contextPlan?.characterFacts?.length || 0,
+    userMemory: contextPlan?.userMemory?.length || 0,
+    styleHints: contextPlan?.styleHints?.length || 0,
+    blockedFacts: contextPlan?.blockedFacts?.length || 0,
+    warnings: contextPlan?.warnings || []
+  };
+}
+
+function summarizeReviewAgent(outputs = []) {
+  const reviews = outputs
+    .map((output) => output.review)
+    .filter(Boolean);
+  return {
+    enabled: reviews.length > 0,
+    reviews
+  };
+}
+
+async function buildOutputPlan({ agent, character, reply, router, userText, history, llm }) {
+  const shouldRenderText = reply.source !== "tool:image.generate" && !router.voiceAgent?.enabled;
+  const outputs = [];
+  if (shouldRenderText && String(reply.text || "").trim()) {
+    outputs.push({
+      type: "text",
+      agent: "text_agent",
+      text: reply.text,
+      source: reply.source || "local"
+    });
+  }
+
+  const imagePlan = buildImageOutputPlan({ reply, router, userText });
+  if (imagePlan) outputs.push(imagePlan);
+
+  const voicePlan = await buildVoiceOutputPlan({ reply, router, userText, history, agent, character, llm });
+  if (voicePlan) outputs.push(voicePlan);
+
+  return outputs;
+}
+
+export { routeAgentTurn } from "./routerAgent.js";
+export { buildVoiceAgentDecision } from "./voiceAgent.js";

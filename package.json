@@ -1,0 +1,63 @@
+{
+  "name": "virtual-companion-agent",
+  "version": "0.1.0",
+  "private": false,
+  "license": "AGPL-3.0-only",
+  "description": "A local virtual companion agent with open self-hosting and optional official license service.",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test tests/*.test.js",
+    "desktop": "electron .",
+    "postinstall": "node scripts/install-electron.cjs",
+    "dist": "node scripts/build-release.cjs nsis portable",
+    "dist:portable": "node scripts/build-release.cjs portable",
+    "dist:installer": "node scripts/build-release.cjs nsis",
+    "dist:dir": "node scripts/build-release.cjs dir"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.virtualcompanion.agent",
+    "productName": "虚拟角色智能体",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "server.js",
+      "src/**/*",
+      "public/**/*",
+      "examples/**/*",
+      "workflows/**/*",
+      "character.json",
+      "character.yaml",
+      "package.json",
+      ".env.example"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "虚拟角色智能体"
+    }
+  }
+}

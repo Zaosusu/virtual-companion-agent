@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompanionAgentMemory",
+  "type": "object",
+  "properties": {
+    "profile": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "timezone": { "type": "string" },
+        "language": { "type": "string" }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/memoryItem" }
+    },
+    "preferences": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/memoryItem" }
+    },
+    "emotional_patterns": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/memoryItem" }
+    },
+    "recent_summaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "user": { "type": "string" },
+          "assistant": { "type": "string" },
+          "mood": { "type": "string" },
+          "workflow": { "type": "string" },
+          "at": { "type": "string" }
+        }
+      }
+    },
+    "safety_notes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/memoryItem" }
+    },
+    "updated_at": { "type": "string" }
+  },
+  "$defs": {
+    "memoryItem": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "at": { "type": "string" }
+      },
+      "required": ["text", "at"]
+    }
+  }
+}
