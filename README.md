@@ -2,6 +2,12 @@
 
 开源客户端仓库。项目默认接入 StepFun 生态，同时支持托管授权服务和自部署模型配置两种使用方式。
 
+架构故事导览见：
+
+```text
+docs/architecture-story.md
+```
+
 详细技术架构见：
 
 ```text
@@ -31,6 +37,8 @@ docs/stepfun-api.md
 `.env`、本地数据库、生成输出、API Key、访问令牌和授权数据属于运行环境资产，不随开源客户端分发。
 
 ## 架构概览
+
+![一条消息的旅程](docs/images/story/architecture_story_images/01_request_journey.svg)
 
 ```text
 用户
@@ -159,6 +167,7 @@ src/tools/imageGeneration.js      图片工具
 src/tools/speechSynthesis.js      语音工具
 tests/                            最小测试
 docs/architecture.md              技术架构文档
+docs/architecture-story.md        架构故事导览
 ```
 
 ## 环境配置

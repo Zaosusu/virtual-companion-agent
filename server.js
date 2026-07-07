@@ -466,6 +466,23 @@ async function handleApi(req, res, pathname) {
       strictEvidence: retrievalPlan.strictEvidence,
       personaCorpusItems: memory.persona_corpus?.length || 0
     });
+    traceLog(traceId, "memory_agent.crag", {
+      agentId: agent.id,
+      originalQuery: retrievalPlan.originalQuery,
+      rewrittenQuery: retrievalPlan.rewrittenQuery,
+      intent: retrievalPlan.intent,
+      quality: retrievalPlan.quality,
+      evidenceCount: retrievalPlan.evidenceCount,
+      rejectedCount: retrievalPlan.rejectedCount,
+      rounds: retrievalPlan.rounds,
+      evidence: retrievedMemories.slice(0, 5).map((item) => ({
+        kind: item.kind,
+        score: item.evidenceScore,
+        rank: item.evidenceRank,
+        query: item.retrievalQuery,
+        preview: String(item.content || "").replace(/\s+/g, " ").slice(0, 180)
+      }))
+    });
 
     let turn;
     try {

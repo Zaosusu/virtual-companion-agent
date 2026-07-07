@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">自部署模式</title>
+  <desc id="desc">展示专业玩家开启自部署模式后，客户端直接连接用户配置的模型服务。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="10" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#3976d3"/></marker>
+    <style>
+      .title{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:74px;font-weight:900;fill:#092653}
+      .label{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:32px;font-weight:850;fill:#102d58}
+      .small{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:23px;font-weight:700;fill:#385874}
+      .tiny{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:19px;font-weight:700;fill:#54708d}
+      .line{fill:none;stroke:#3976d3;stroke-width:8;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#fbfdff"/>
+  <text x="800" y="94" text-anchor="middle" class="title">自部署模式：专业玩家的直连通道</text>
+  <text x="800" y="138" text-anchor="middle" class="small">开启 COMPANION_SELF_HOSTED 后，模型配置由本地环境接管，调用成本也由用户自行管理</text>
+
+  <rect x="80" y="260" width="300" height="230" rx="30" fill="#eaf2ff" stroke="#4c80d9" stroke-width="3"/>
+  <text x="230" y="328" text-anchor="middle" class="label">开源客户端</text>
+  <text x="230" y="382" text-anchor="middle" class="small">UI + 本地 Node API</text>
+  <text x="230" y="422" text-anchor="middle" class="small">Agent 编排仍在本地</text>
+
+  <rect x="520" y="210" width="560" height="330" rx="34" fill="#ffffff" stroke="#4c80d9" stroke-width="4"/>
+  <text x="800" y="276" text-anchor="middle" class="label">本地 .env 配置</text>
+  <rect x="585" y="326" width="430" height="52" rx="12" fill="#f2f6fc" stroke="#b6cae8" stroke-width="2"/>
+  <text x="800" y="361" text-anchor="middle" class="small">COMPANION_SELF_HOSTED=1</text>
+  <rect x="585" y="398" width="430" height="52" rx="12" fill="#f2f6fc" stroke="#b6cae8" stroke-width="2"/>
+  <text x="800" y="433" text-anchor="middle" class="small">STEPFUN_BASE_URL / STEPFUN_MODEL</text>
+  <rect x="585" y="470" width="430" height="52" rx="12" fill="#f2f6fc" stroke="#b6cae8" stroke-width="2"/>
+  <text x="800" y="505" text-anchor="middle" class="small">STEP_API_KEY / 图片 / 语音模型</text>
+
+  <rect x="1220" y="210" width="300" height="130" rx="26" fill="#e9f8f1" stroke="#52a982" stroke-width="3"/>
+  <text x="1370" y="268" text-anchor="middle" class="label">StepFun API</text>
+  <text x="1370" y="306" text-anchor="middle" class="small">官方兼容通道</text>
+  <rect x="1220" y="410" width="300" height="130" rx="26" fill="#fff3df" stroke="#f0a54b" stroke-width="3"/>
+  <text x="1370" y="468" text-anchor="middle" class="label">OpenAI-compatible</text>
+  <text x="1370" y="506" text-anchor="middle" class="small">用户自己的供应商</text>
+
+  <path d="M380 375 C440 375 460 375 520 375" class="line"/>
+  <path d="M1080 330 C1140 280 1160 275 1220 275" class="line"/>
+  <path d="M1080 420 C1140 470 1160 475 1220 475" class="line"/>
+
+  <rect x="246" y="635" width="360" height="92" rx="22" fill="#ffffff" stroke="#9bbceb" stroke-width="3"/>
+  <text x="426" y="692" text-anchor="middle" class="small">用户掌握模型供应商与 API Key</text>
+  <rect x="620" y="635" width="360" height="92" rx="22" fill="#ffffff" stroke="#9bbceb" stroke-width="3"/>
+  <text x="800" y="692" text-anchor="middle" class="small">客户端不依赖托管授权服务中转</text>
+  <rect x="994" y="635" width="360" height="92" rx="22" fill="#ffffff" stroke="#9bbceb" stroke-width="3"/>
+  <text x="1174" y="692" text-anchor="middle" class="small">调用成本与服务稳定性由用户管理</text>
+
+  <rect x="205" y="790" width="1190" height="72" rx="22" fill="#ffffff" stroke="#9bbceb" stroke-width="3"/>
+  <text x="800" y="838" text-anchor="middle" class="label">故事线：高级用户把模型钥匙放在自己手里，客户端只负责本地体验和 Agent 编排。</text>
+</svg>

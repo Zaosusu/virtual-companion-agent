@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Agent 小队接力</title>
+  <desc id="desc">展示安全、记忆、文本、图片和语音 Agent 如何围绕一次聊天回合接力工作。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="10" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#3976d3"/></marker>
+    <style>
+      .title{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:74px;font-weight:900;fill:#092653}
+      .label{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:31px;font-weight:850;fill:#102d58}
+      .small{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:23px;font-weight:700;fill:#385874}
+      .tiny{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:19px;font-weight:700;fill:#54708d}
+      .card{fill:#ffffff;stroke:#6f98da;stroke-width:3}
+      .line{fill:none;stroke:#3976d3;stroke-width:7;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="#fbfdff"/>
+  <text x="800" y="92" text-anchor="middle" class="title">Agent 小队接力</text>
+  <text x="800" y="136" text-anchor="middle" class="small">一次聊天不是一个大函数做完，而是多个 Agent 各守一段职责</text>
+
+  <rect x="72" y="280" width="190" height="270" rx="26" fill="#eaf2ff" stroke="#4c80d9" stroke-width="3"/>
+  <text x="167" y="340" text-anchor="middle" class="label">Router</text>
+  <text x="167" y="392" text-anchor="middle" class="small">判断输出形态</text>
+  <text x="167" y="432" text-anchor="middle" class="small">text</text>
+  <text x="167" y="466" text-anchor="middle" class="small">image</text>
+  <text x="167" y="500" text-anchor="middle" class="small">voice</text>
+
+  <rect x="330" y="198" width="210" height="166" rx="24" fill="#fff3df" stroke="#f0a54b" stroke-width="3"/>
+  <text x="435" y="254" text-anchor="middle" class="label">Safety</text>
+  <text x="435" y="300" text-anchor="middle" class="small">风险先看见</text>
+  <text x="435" y="332" text-anchor="middle" class="tiny">危机场景约束语音输出</text>
+
+  <rect x="330" y="470" width="210" height="166" rx="24" fill="#e9f8f1" stroke="#52a982" stroke-width="3"/>
+  <text x="435" y="526" text-anchor="middle" class="label">Memory</text>
+  <text x="435" y="572" text-anchor="middle" class="small">召回长期记忆</text>
+  <text x="435" y="604" text-anchor="middle" class="tiny">写入摘要与候选记忆</text>
+
+  <rect x="610" y="280" width="240" height="270" rx="28" fill="#f2edff" stroke="#8a74da" stroke-width="3"/>
+  <text x="730" y="350" text-anchor="middle" class="label">Text Agent</text>
+  <text x="730" y="402" text-anchor="middle" class="small">结合人设、历史</text>
+  <text x="730" y="438" text-anchor="middle" class="small">和 RAG 记忆</text>
+  <text x="730" y="492" text-anchor="middle" class="small">生成主回复</text>
+
+  <rect x="920" y="198" width="230" height="166" rx="24" fill="#e9fbff" stroke="#56aac7" stroke-width="3"/>
+  <text x="1035" y="254" text-anchor="middle" class="label">Image Agent</text>
+  <text x="1035" y="300" text-anchor="middle" class="small">把语义整理成</text>
+  <text x="1035" y="332" text-anchor="middle" class="tiny">图片工具计划</text>
+
+  <rect x="920" y="470" width="230" height="166" rx="24" fill="#fff0f5" stroke="#db6a95" stroke-width="3"/>
+  <text x="1035" y="526" text-anchor="middle" class="label">Voice Agent</text>
+  <text x="1035" y="572" text-anchor="middle" class="small">捕获语气情绪</text>
+  <text x="1035" y="604" text-anchor="middle" class="tiny">生成语音演绎指令</text>
+
+  <rect x="1230" y="280" width="300" height="270" rx="28" fill="#ffffff" stroke="#4c80d9" stroke-width="3"/>
+  <text x="1380" y="344" text-anchor="middle" class="label">orchestration.outputs</text>
+  <text x="1380" y="402" text-anchor="middle" class="small">文字回复</text>
+  <text x="1380" y="444" text-anchor="middle" class="small">图片计划</text>
+  <text x="1380" y="486" text-anchor="middle" class="small">语音计划</text>
+
+  <path d="M262 415 C290 415 300 281 330 281" class="line"/>
+  <path d="M262 415 C290 415 300 553 330 553" class="line"/>
+  <path d="M540 281 C580 281 580 363 610 385" class="line"/>
+  <path d="M540 553 C580 553 580 472 610 445" class="line"/>
+  <path d="M850 415 C885 415 890 281 920 281" class="line"/>
+  <path d="M850 415 C885 415 890 553 920 553" class="line"/>
+  <path d="M1150 281 C1190 281 1200 356 1230 372" class="line"/>
+  <path d="M1150 553 C1190 553 1200 474 1230 462" class="line"/>
+
+  <rect x="220" y="742" width="1160" height="92" rx="24" fill="#ffffff" stroke="#9bbceb" stroke-width="3"/>
+  <text x="800" y="800" text-anchor="middle" class="label">故事线：每个 Agent 只拿自己该拿的上下文，最后汇成一个可执行的输出计划。</text>
+</svg>

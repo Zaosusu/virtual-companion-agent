@@ -65,12 +65,14 @@ export function runCragRetrieval({ store, agentId = "", message = "", history = 
   const evaluated = evaluateEvidence([...seen.values()], retrievalPlan)
     .sort((left, right) => (right.evidenceScore - left.evidenceScore) || (right.evidenceRank - left.evidenceRank));
 
-  const useful = evaluated
+  const initialUseful = evaluated
     .filter((item) => item.evidenceGrade !== "reject")
     .slice(0, limit);
 
-  const bestScore = useful[0]?.evidenceScore || 0;
+  const bestScore = initialUseful[0]?.evidenceScore || 0;
   const quality = bestScore >= 0.52 ? "good" : bestScore >= 0.34 ? "partial" : "poor";
+  const strictEvidence = retrievalPlan.factSeeking || quality !== "good";
+  const useful = strictEvidence && quality === "poor" ? [] : initialUseful;
 
   return {
     retrievedMemories: useful,
@@ -81,7 +83,7 @@ export function runCragRetrieval({ store, agentId = "", message = "", history = 
       bestScore,
       rejectedCount: evaluated.length - useful.length,
       evidenceCount: useful.length,
-      strictEvidence: retrievalPlan.factSeeking || quality !== "good"
+      strictEvidence
     }
   };
 }

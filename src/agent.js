@@ -504,6 +504,9 @@ function formatEvidenceInstruction(retrievalPlan) {
       "不要把目录、口头禅、语气风格、价值观、上一轮 assistant 编过的内容当事实证据。",
       "如果资料库证据不足，必须用角色口吻说明“我这边资料库里没查到更具体记录/不敢乱说”，可以给出已确认的少量事实，并询问用户是否要导入更完整资料。"
     );
+    if (!retrievalPlan.evidenceCount) {
+      lines.push("本轮 CRAG 没有找到可用证据：禁止输出任何具体时间、地点、奖项名、金额、名次、评委评价、项目数据或故事细节。");
+    }
   } else {
     lines.push("可以自然聊天，但涉及具体事实时仍然不要补不存在的时间、地点、奖项、金额、人物评价。");
   }
