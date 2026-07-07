@@ -454,6 +454,7 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
     "如果用户正在用逝去亲人的资料做角色，要温柔承接怀念和哀伤，但避免制造依赖或替代现实哀悼支持。",
     "人物资料库必须先经过 context_agent 的身份归属判断再使用。不要自行把 blockedFacts 恢复成事实。",
     formatEvidenceInstruction(retrievalPlan),
+    formatAllowedEvidence(retrievedMemories, retrievalPlan),
     llm.imageOutputAvailable ? "当前配置声明支持图片输出。" : "当前配置未声明图片输出能力。",
     safety.level === "bounded" ? "当前话题涉及高风险领域，请明确边界，转向整理信息和建议咨询专业人士。" : "",
     `context_agent 身份归属结果：${JSON.stringify(formatContextPlan(contextPlan, memory, retrievedMemories), null, 2).slice(0, 3200)}`
@@ -461,9 +462,40 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
 
   return [
     { role: "system", content: system },
-    ...history.map((item) => ({ role: item.role === "assistant" ? "assistant" : "user", content: String(item.content || "").slice(0, 1200) })),
+    ...formatHistoryForRemote(history, retrievalPlan),
     { role: "user", content: message }
   ];
+}
+
+function formatHistoryForRemote(history = [], retrievalPlan = null) {
+  if (retrievalPlan?.strictEvidence) {
+    return history
+      .filter((item) => item.role !== "assistant")
+      .slice(-4)
+      .map((item) => ({
+        role: "user",
+        content: String(item.content || "").slice(0, 500)
+      }));
+  }
+  return history.map((item) => ({
+    role: item.role === "assistant" ? "assistant" : "user",
+    content: String(item.content || "").slice(0, 1200)
+  }));
+}
+
+function formatAllowedEvidence(retrievedMemories = [], retrievalPlan = null) {
+  if (!retrievalPlan?.strictEvidence) return "";
+  const evidence = (retrievedMemories || [])
+    .slice(0, 8)
+    .map((item, index) => {
+      const text = String(item.content || "").replace(/\s+/g, " ").slice(0, 900);
+      return `证据${index + 1}：${text}`;
+    });
+  if (!evidence.length) return "CRAG允许证据：无。";
+  return [
+    "CRAG允许证据如下。回答具体事实时只能引用这些证据；未出现在这里的时间、地点、项目名、金额、名次、人物评价、数据，一律视为未知，不得补全。",
+    ...evidence
+  ].join("\n");
 }
 
 function formatContextPlan(contextPlan, memory, retrievedMemories) {

@@ -31,6 +31,7 @@ export async function orchestrateCompanionTurn({
     character,
     memory,
     retrievedMemories,
+    retrievalPlan,
     contextPlan,
     message,
     history,

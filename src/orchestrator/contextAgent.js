@@ -3,17 +3,18 @@ export async function runContextAgent({
   character = {},
   memory = {},
   retrievedMemories = [],
+  retrievalPlan = null,
   message = "",
   history = [],
   llm = {},
   traceId = ""
 }) {
-  const fallback = localContextPlan({ agent, character, memory, retrievedMemories, message, history });
+  const fallback = localContextPlan({ agent, character, memory, retrievedMemories, retrievalPlan, message, history });
   if (!llm?.apiKey || !llm?.baseUrl || !llm?.model) return fallback;
   if (!needsRemoteContextAgent({ retrievedMemories, memory, message })) return fallback;
 
   try {
-    const plan = await callContextModel({ agent, character, memory, retrievedMemories, message, history, llm, traceId });
+    const plan = await callContextModel({ agent, character, memory, retrievedMemories, retrievalPlan, message, history, llm, traceId });
     return normalizePlan(plan, fallback);
   } catch (error) {
     logTrace(traceId, "context_agent.fallback", { message: error.message });
@@ -32,7 +33,7 @@ function needsRemoteContextAgent({ retrievedMemories = [], memory = {}, message 
   return hasLargeCorpus || hasIdentityRisk;
 }
 
-async function callContextModel({ agent, character, memory, retrievedMemories, message, history, llm, traceId }) {
+async function callContextModel({ agent, character, memory, retrievedMemories, retrievalPlan, message, history, llm, traceId }) {
   const endpoint = llm.mode === "cloud_license" || llm.mode === "free_quota"
     ? `${llm.baseUrl.replace(/\/$/, "")}/api/chat`
     : `${llm.baseUrl.replace(/\/$/, "")}/chat/completions`;
@@ -40,7 +41,13 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
     roleName: agent.name || character.name || "",
     persona: agent.persona || character.persona || "",
     userText: message,
-    recentHistory: compactMessages(history.slice(-5)),
+    recentHistory: retrievalPlan?.strictEvidence ? compactMessages(history.filter((item) => item.role !== "assistant").slice(-4)) : compactMessages(history.slice(-5)),
+    retrievalPlan: retrievalPlan ? {
+      intent: retrievalPlan.intent,
+      quality: retrievalPlan.quality,
+      strictEvidence: retrievalPlan.strictEvidence,
+      evidenceCount: retrievalPlan.evidenceCount
+    } : null,
     retrievedMemories: retrievedMemories.slice(0, 8).map((item) => ({
       kind: item.kind,
       content: compactText(item.content, 260),
@@ -53,13 +60,13 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
         facts: compactMemoryItems(memory.facts, 5),
         preferences: compactMemoryItems(memory.preferences, 5),
         emotional_patterns: compactMemoryItems(memory.emotional_patterns, 5),
-        recent_summaries: compactMemoryItems(memory.recent_summaries, 5)
+        recent_summaries: retrievalPlan?.strictEvidence ? [] : compactMemoryItems(memory.recent_summaries, 5)
       },
       persona: {
-        style: compactMemoryItems(memory.persona_style, 4),
-        values: compactMemoryItems(memory.persona_values, 4),
-        catchphrases: compactMemoryItems(memory.persona_catchphrases, 6),
-        corpus: compactMemoryItems(memory.persona_corpus, 4, 260)
+        style: retrievalPlan?.strictEvidence ? [] : compactMemoryItems(memory.persona_style, 4),
+        values: retrievalPlan?.strictEvidence ? [] : compactMemoryItems(memory.persona_values, 4),
+        catchphrases: retrievalPlan?.strictEvidence ? [] : compactMemoryItems(memory.persona_catchphrases, 6),
+        corpus: retrievalPlan?.strictEvidence ? [] : compactMemoryItems(memory.persona_corpus, 4, 260)
       }
     }
   };
@@ -70,6 +77,7 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
         "你是 context_agent。只做身份归属分类，不聊天。",
         "把资料分为：characterFacts=当前角色事实；userMemory=当前聊天用户事实；styleHints=只学语气；blockedFacts=第三方/导入者/开发者资料，禁止当事实。",
         "如果角色人设明确说资料库就是角色本人经历，可以把资料归为 characterFacts；否则可疑开发/奖项/项目资料优先 blockedFacts 或 styleHints。",
+        "如果 payload.retrievalPlan.strictEvidence=true，只能把 payload.retrievedMemories 归入 characterFacts，不要从 recentHistory 或 memorySnapshot 补事实。",
         "必须输出紧凑 JSON，不要解释，不要推理，不要 Markdown。",
         "{\"characterFacts\":[],\"userMemory\":[],\"styleHints\":[],\"blockedFacts\":[],\"warnings\":[],\"identityRule\":\"\"}"
       ].join("\n")
@@ -130,7 +138,21 @@ function compactText(value, maxChars = 220) {
   return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
 }
 
-function localContextPlan({ agent, character, memory, retrievedMemories, history }) {
+function localContextPlan({ agent, character, memory, retrievedMemories, retrievalPlan, history }) {
+  if (retrievalPlan?.strictEvidence) {
+    return {
+      agent: "context_agent",
+      reviewer: "local_strict_evidence",
+      characterFacts: compactList((retrievedMemories || []).map((item) => item.content), 10),
+      userMemory: [],
+      styleHints: [],
+      blockedFacts: [],
+      warnings: retrievalPlan.evidenceCount
+        ? ["严格证据模式：只允许使用 memory_agent/CRAG 召回证据。"]
+        : ["严格证据模式：没有可用证据，禁止补全具体事实。"],
+      identityRule: "第一人称是当前角色；本轮具体事实只能来自 characterFacts。"
+    };
+  }
   const roleText = `${agent.name || character.name || ""}\n${agent.persona || character.persona || ""}`;
   const roleAllowsDeveloperFacts = /开发|AI|黑客松|创业|程序|代码|Agent|OPC|金鸡湖|南京/i.test(roleText);
   const blockedFacts = [];
