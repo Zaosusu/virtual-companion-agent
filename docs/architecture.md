@@ -457,6 +457,7 @@ license-backend/data/licenses.json
 - 月额度。
 - StepFun Chat / Image / TTS / Voice Clone 中转。
 - 管理后台。
+- 基础安全防护：强管理员 token、CORS 白名单、请求体大小限制、内存限流。
 
 ### 授权链路
 
@@ -478,7 +479,17 @@ LICENSE_ALLOW_DIRECT_KEYS=1
 
 ### 生产升级建议
 
-JSON 文件适合 MVP，不适合生产并发。建议升级为 SQLite 或 Postgres。
+授权后端已经具备第一层上线前防护：
+
+- `LICENSE_ADMIN_TOKEN` 必须至少 24 位，不能留空，不能使用 `dev-admin` 或示例值。
+- 管理员 token 使用常量时间比较。
+- `LICENSE_CORS_ORIGINS` 控制允许访问授权网关的前端来源。
+- `LICENSE_REQUEST_BODY_LIMIT_BYTES` 限制请求体大小，默认 2MB。
+- `LICENSE_RATE_LIMIT_*` 提供内存级基础限流。
+- `/api/health` 不再暴露 StepFun baseUrl，只返回安全配置状态。
+- `LICENSE_ALLOW_DIRECT_KEYS` 默认保持 `0`，不允许直接用 `vc_live_xxx` 调模型接口。
+
+这些防护适合本地开发、小范围内测和初期部署，但还不是完整生产安全体系。JSON 文件仍只适合 MVP，不适合生产并发。建议升级为 SQLite 或 Postgres。
 
 建议表结构：
 
@@ -494,7 +505,7 @@ JSON 文件适合 MVP，不适合生产并发。建议升级为 SQLite 或 Postg
 生产加固优先级：
 
 1. 用数据库事务记录用量，避免并发超额。
-2. 增加 IP、用户、授权身份维度限流。
+2. 将内存限流升级为 Redis / 数据库限流，支持多实例部署。
 3. 管理后台从单 token 升级为登录会话。
 4. 增加审计日志。
 5. SMTP、StepFun API Key、管理员密钥全部只放服务端环境。
@@ -546,6 +557,13 @@ license-backend/.env
 ```env
 LICENSE_PORT=8787
 LICENSE_ADMIN_TOKEN=replace-with-a-long-random-secret
+LICENSE_CORS_ORIGINS=http://localhost:5177,http://127.0.0.1:5177
+LICENSE_REQUEST_BODY_LIMIT_BYTES=2097152
+LICENSE_RATE_LIMIT_WINDOW_MS=60000
+LICENSE_RATE_LIMIT_AUTH_MAX=12
+LICENSE_RATE_LIMIT_API_MAX=60
+LICENSE_RATE_LIMIT_ADMIN_MAX=30
+LICENSE_RATE_LIMIT_GENERAL_MAX=120
 LICENSE_DEFAULT_MONTHLY_LIMIT=3000
 LICENSE_FREE_USER_TRIAL_LIMIT=10
 LICENSE_ALLOW_DIRECT_KEYS=0
@@ -600,6 +618,8 @@ STEPFUN_AUDIO_MODEL=stepaudio-2.5-tts
 - 普通用户模式下，StepFun API Key 只存在 `license-backend/.env`。
 - 客户端开源仓库不能提交生产 `.env`、授权数据、管理员 token。
 - 自部署 API Key 只给明确开启 `COMPANION_SELF_HOSTED=1` 的专业玩家使用。
+- 授权后端必须使用强 `LICENSE_ADMIN_TOKEN`，并限制 `LICENSE_CORS_ORIGINS`。
+- 授权后端入口必须保留请求体大小限制和限流策略。
 - 自伤、自杀等危机表达优先进入安全回复，不触发语音娱乐化输出。
 - 医疗、法律、金融等高风险话题只做信息整理和边界提醒。
 
@@ -649,12 +669,13 @@ http://localhost:5177
 - 前端停止核心输出路由和 prompt 构造。
 - 删除旧前端 `public/routerAgent.js`。
 - 新增 `npm test` 和最小测试。
+- 授权后端完成第一轮安全加固：强管理员 token、CORS 白名单、body limit、内存限流。
 
 仍待完成：
 
 - 全仓中文乱码修复，统一 UTF-8。
 - 将 `server.js` 拆分到 `routes/`、`services/`、`gateways/`、`policies/`。
-- 授权后端从 JSON 文件升级 SQLite 或 Postgres。
+- 授权后端从 JSON 文件升级 SQLite 或 Postgres，并把内存限流升级为可多实例共享的限流。
 - 补授权额度、网关 mock、端到端 smoke test。
 - 建立 CI。
 
@@ -694,7 +715,7 @@ server.js
 
 - JSON -> SQLite/Postgres。
 - 原子用量扣减。
-- 请求限流。
+- 分布式请求限流。
 - 管理后台登录。
 - 审计日志。
 

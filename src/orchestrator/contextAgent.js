@@ -10,6 +10,7 @@ export async function runContextAgent({
 }) {
   const fallback = localContextPlan({ agent, character, memory, retrievedMemories, message, history });
   if (!llm?.apiKey || !llm?.baseUrl || !llm?.model) return fallback;
+  if (!needsRemoteContextAgent({ retrievedMemories, memory, message })) return fallback;
 
   try {
     const plan = await callContextModel({ agent, character, memory, retrievedMemories, message, history, llm, traceId });
@@ -20,6 +21,17 @@ export async function runContextAgent({
   }
 }
 
+function needsRemoteContextAgent({ retrievedMemories = [], memory = {}, message = "" }) {
+  const text = [
+    message,
+    ...retrievedMemories.map((item) => item.content),
+    ...(memory.persona_corpus || []).slice(0, 3).map((item) => item.text)
+  ].join("\n");
+  const hasLargeCorpus = text.length > 2600;
+  const hasIdentityRisk = /这是谁的资料|我的资料|你的资料|本人|分身|复刻|亲人|去世|开发者|导入者|Agent Build|Hackathon|黑客松|项目获奖|代码|Demo/i.test(text);
+  return hasLargeCorpus || hasIdentityRisk;
+}
+
 async function callContextModel({ agent, character, memory, retrievedMemories, message, history, llm, traceId }) {
   const endpoint = llm.mode === "cloud_license" || llm.mode === "free_quota"
     ? `${llm.baseUrl.replace(/\/$/, "")}/api/chat`
@@ -28,26 +40,26 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
     roleName: agent.name || character.name || "",
     persona: agent.persona || character.persona || "",
     userText: message,
-    recentHistory: history.slice(-8),
-    retrievedMemories: retrievedMemories.slice(0, 10).map((item) => ({
+    recentHistory: compactMessages(history.slice(-5)),
+    retrievedMemories: retrievedMemories.slice(0, 8).map((item) => ({
       kind: item.kind,
-      content: item.content,
+      content: compactText(item.content, 260),
       score: item.score,
       ftsScore: item.ftsScore
     })),
     memorySnapshot: {
       user: {
         profile: memory.profile || {},
-        facts: memory.facts || [],
-        preferences: memory.preferences || [],
-        emotional_patterns: memory.emotional_patterns || [],
-        recent_summaries: memory.recent_summaries || []
+        facts: compactMemoryItems(memory.facts, 5),
+        preferences: compactMemoryItems(memory.preferences, 5),
+        emotional_patterns: compactMemoryItems(memory.emotional_patterns, 5),
+        recent_summaries: compactMemoryItems(memory.recent_summaries, 5)
       },
       persona: {
-        style: memory.persona_style || [],
-        values: memory.persona_values || [],
-        catchphrases: memory.persona_catchphrases || [],
-        corpus: (memory.persona_corpus || []).slice(0, 8)
+        style: compactMemoryItems(memory.persona_style, 4),
+        values: compactMemoryItems(memory.persona_values, 4),
+        catchphrases: compactMemoryItems(memory.persona_catchphrases, 6),
+        corpus: compactMemoryItems(memory.persona_corpus, 4, 260)
       }
     }
   };
@@ -55,11 +67,11 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
     {
       role: "system",
       content: [
-        "你是 context_agent，负责在 text_agent 回复前整理上下文身份归属。",
-        "目标是防止串台：不要让角色资料、开发者资料、导入者资料、当前用户资料互相污染。",
-        "必须判断每条资料属于哪一类：character_facts 当前角色事实；user_memory 当前聊天用户事实；style_only 只可学习语气风格；third_party_noise 第三方/开发者/导入者资料，不可当作角色或用户事实。",
-        "如果资料提到黑客松、Agent Build、开发工具、项目获奖、代码、开发者，而当前角色人设没有明确写自己就是这个人，优先归为 third_party_noise 或 style_only。",
-        "输出严格 JSON，不要 Markdown。格式：{\"characterFacts\":[],\"userMemory\":[],\"styleHints\":[],\"blockedFacts\":[],\"warnings\":[],\"identityRule\":\"一句话身份边界\"}"
+        "你是 context_agent。只做身份归属分类，不聊天。",
+        "把资料分为：characterFacts=当前角色事实；userMemory=当前聊天用户事实；styleHints=只学语气；blockedFacts=第三方/导入者/开发者资料，禁止当事实。",
+        "如果角色人设明确说资料库就是角色本人经历，可以把资料归为 characterFacts；否则可疑开发/奖项/项目资料优先 blockedFacts 或 styleHints。",
+        "必须输出紧凑 JSON，不要解释，不要推理，不要 Markdown。",
+        "{\"characterFacts\":[],\"userMemory\":[],\"styleHints\":[],\"blockedFacts\":[],\"warnings\":[],\"identityRule\":\"\"}"
       ].join("\n")
     },
     { role: "user", content: JSON.stringify(payload, null, 2) }
@@ -81,7 +93,7 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
       model: llm.model,
       messages,
       temperature: 0.1,
-      max_tokens: 700
+      max_tokens: 900
     })
   });
   if (!response.ok) throw new Error(`context agent failed ${response.status}: ${(await response.text()).slice(0, 200)}`);
@@ -95,6 +107,27 @@ async function callContextModel({ agent, character, memory, retrievedMemories, m
     blockedFacts: parsed.blockedFacts?.length || 0
   });
   return parsed;
+}
+
+function compactMessages(messages = []) {
+  return messages.map((item) => ({
+    role: item.role,
+    content: compactText(item.content, 220)
+  }));
+}
+
+function compactMemoryItems(items = [], limit = 5, maxChars = 220) {
+  return (Array.isArray(items) ? items : [])
+    .slice(0, limit)
+    .map((item) => ({
+      text: compactText(item.text || item.assistant || item.content || item, maxChars)
+    }))
+    .filter((item) => item.text);
+}
+
+function compactText(value, maxChars = 220) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
 }
 
 function localContextPlan({ agent, character, memory, retrievedMemories, history }) {

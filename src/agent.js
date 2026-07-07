@@ -398,7 +398,7 @@ async function callRemoteModel({ character, memory, retrievedMemories, contextPl
   });
 
   if (llm.mode === "cloud_license" || llm.mode === "free_quota") {
-    return callOfficialGateway({ llm, messages, temperature: 0.8, maxTokens: 700, traceId, startedAt });
+    return callOfficialGateway({ llm, messages, temperature: 0.75, maxTokens: 1400, traceId, startedAt });
   }
 
   const endpoint = `${llm.baseUrl.replace(/\/$/, "")}/chat/completions`;
@@ -406,7 +406,7 @@ async function callRemoteModel({ character, memory, retrievedMemories, contextPl
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${llm.apiKey}` },
     signal: modelTimeoutSignal(),
-    body: JSON.stringify(buildChatCompletionBody({ model: llm.model, messages, temperature: 0.8, maxTokens: 700 }))
+    body: JSON.stringify(buildChatCompletionBody({ model: llm.model, messages, temperature: 0.75, maxTokens: 1400 }))
   });
   if (!response.ok) {
     const text = await response.text();
@@ -541,7 +541,7 @@ function buildChatCompletionBody({ model, messages, temperature, maxTokens }) {
     max_tokens: maxTokens
   };
   if (supportsStepFunReasoningEffort(model)) {
-    body.reasoning_effort = "medium";
+    body.reasoning_effort = "low";
   }
   return body;
 }
@@ -600,6 +600,9 @@ async function callOfficialGateway({ llm, messages, temperature, maxTokens, trac
 
 function detectGatewayErrorCode(status, text = "") {
   const value = String(text || "");
+  if (/empty_model_response|空内容|finishReason|finish_reason/i.test(value)) {
+    return "empty_model_response";
+  }
   if (status === 402 || status === 429 || /quota|limit|额度|用完|余额|会员|upgrade|payment|subscribe/i.test(value)) {
     return "quota_exceeded";
   }
@@ -612,6 +615,7 @@ function detectGatewayErrorCode(status, text = "") {
 function publicGatewayErrorMessage(code) {
   if (code === "quota_exceeded") return "免费额度已用完，请升级会员后继续使用。";
   if (code === "authorization_required") return "请先登录并绑定授权码后继续使用。";
+  if (code === "empty_model_response") return "模型本次没有生成正式回复，已被系统拦截。请重试一次。";
   return "服务暂时不可用，请稍后再试。";
 }
 
