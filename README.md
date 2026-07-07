@@ -1,4 +1,4 @@
-﻿# Virtual Companion Agent
+# Virtual Companion Agent
 
 开源客户端仓库。项目默认接入 StepFun 生态，同时支持托管授权服务和自部署模型配置两种使用方式。
 
@@ -175,17 +175,10 @@ npm start
 http://localhost:5177
 ```
 
-启动托管授权服务：
+连接托管授权服务时，在 `.env` 中配置服务地址：
 
-```powershell
-cd ../license-backend
-npm start
-```
-
-授权管理后台：
-
-```text
-http://localhost:8787/admin
+```env
+COMPANION_OFFICIAL_BASE_URL=https://your-license-service.example.com
 ```
 
 ## 测试
