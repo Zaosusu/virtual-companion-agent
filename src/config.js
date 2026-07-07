@@ -1,9 +1,11 @@
+import { RELEASE_OFFICIAL_BASE_URL } from "./releaseEnv.js";
+
 export function getEffectiveModelConfig(store, env = process.env) {
   const saved = store.getModelConfig();
   const envApiKey = env.STEP_API_KEY || env.STEPFUN_API_KEY || env.COMPANION_API_KEY || "";
   const envBaseUrl = env.STEPFUN_BASE_URL || env.COMPANION_BASE_URL || "https://api.stepfun.com/step_plan/v1";
   const envModel = env.STEPFUN_MODEL || env.COMPANION_MODEL || "step-3.7-flash";
-  const envOfficialBaseUrl = env.COMPANION_OFFICIAL_BASE_URL || "http://role.walkingxiuxian.cn";
+  const envOfficialBaseUrl = env.COMPANION_OFFICIAL_BASE_URL || RELEASE_OFFICIAL_BASE_URL || "";
   const envOfficialModel = env.COMPANION_OFFICIAL_MODEL || envModel;
   const selfHostedEnabled = env.COMPANION_SELF_HOSTED === "1";
 
