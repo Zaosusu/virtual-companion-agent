@@ -114,6 +114,7 @@ export function characterFromAgent(agent) {
     name: agent.name,
     version: "0.2.0",
     persona: agent.persona,
+    gender: normalizeAgentGender(agent.gender, agent.voiceGender),
     relationship: {
       default: agent.category,
       stance: agent.relationship
@@ -130,7 +131,9 @@ export function characterFromAgent(agent) {
       systemPrompt: agent.systemPrompt,
       prompts: agent.prompts || [],
       avatar: agent.avatar,
+      avatarImage: agent.avatarImage || null,
       tagline: agent.tagline,
+      gender: normalizeAgentGender(agent.gender, agent.voiceGender),
       imageStyle: agent.imageStyle || "realistic",
       appearance: agent.appearance || "",
       visualContext: agent.visualContext || "",
@@ -138,7 +141,10 @@ export function characterFromAgent(agent) {
       voiceTone: agent.voiceTone || "warm",
       clonedVoiceId: agent.clonedVoiceId || "",
       voiceSampleName: agent.voiceSampleName || "",
-      referenceImage: agent.referenceImage || null
+      referenceImage: agent.referenceImage || null,
+      chatBackground: agent.chatBackground || null,
+      chatBackgroundOpacity: agent.chatBackgroundOpacity ?? 0.18,
+      chatBackgroundBlur: agent.chatBackgroundBlur ?? 0
     }
   };
 }
@@ -167,6 +173,7 @@ export function agentFromImport(value) {
     category: agent.category || "custom",
     tagline: agent.tagline || "",
     persona: agent.persona,
+    gender: normalizeAgentGender(agent.gender, agent.voiceGender),
     appearance: agent.appearance || "",
     voiceStyle: agent.voiceStyle || "",
     relationship: agent.relationship || "",
@@ -179,6 +186,9 @@ export function agentFromImport(value) {
     clonedVoiceId: agent.clonedVoiceId || "",
     voiceSampleName: agent.voiceSampleName || "",
     referenceImage: agent.referenceImage || null,
+    chatBackground: agent.chatBackground || null,
+    chatBackgroundOpacity: normalizeChatBackgroundOpacity(agent.chatBackgroundOpacity),
+    chatBackgroundBlur: normalizeChatBackgroundBlur(agent.chatBackgroundBlur),
     boundaries: Array.isArray(agent.boundaries) ? agent.boundaries : [],
     safetyRules: Array.isArray(agent.safetyRules) ? agent.safetyRules : [],
     prompts: Array.isArray(agent.prompts) ? agent.prompts : [],
@@ -202,6 +212,26 @@ function normalizeVoiceGender(value) {
     "neutral",
     "neutral_calm"
   ].includes(value) ? value : "female";
+}
+
+function normalizeAgentGender(value, voiceGender = "") {
+  const gender = String(value || "").trim();
+  if (["female", "male", "nonbinary", "unspecified"].includes(gender)) return gender;
+  if (["boy", "male", "deep_male"].includes(voiceGender)) return "male";
+  if (["girl", "female", "mature_female"].includes(voiceGender)) return "female";
+  return "unspecified";
+}
+
+function normalizeChatBackgroundOpacity(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0.18;
+  return Math.min(0.7, Math.max(0, number));
+}
+
+function normalizeChatBackgroundBlur(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.min(24, Math.max(0, Math.round(number)));
 }
 
 function parseJsonObject(value) {

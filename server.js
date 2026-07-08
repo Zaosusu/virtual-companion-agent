@@ -443,7 +443,7 @@ async function handleApi(req, res, pathname) {
         quota
       });
     }
-    const userMessageId = store.addMessage({ sessionId, role: "user", content: message });
+    const userMessageId = store.addMessage({ sessionId, role: "user", content: message, status: "active" });
     const ragStartedAt = Date.now();
     const history = store.getRecentMessages(sessionId, 14).map((item) => ({
       role: item.role,
@@ -547,6 +547,133 @@ async function handleApi(req, res, pathname) {
       retrievalPlan,
       quota
     }));
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/chat/regenerate") {
+    const traceId = createTraceId("regen");
+    const chatStartedAt = Date.now();
+    const body = await readBody(req);
+    const oldAssistantId = Number(body.message_id || body.messageId || 0);
+    const requestId = String(body.requestId || traceId);
+    if (!Number.isFinite(oldAssistantId) || oldAssistantId <= 0) {
+      return sendJson(res, 400, { error: "message_id is required" });
+    }
+
+    const { agent, character, modelConfig } = getRuntimeConfig();
+    return enqueueByKey(`chat:${agent.id}`, async () => {
+      const sessionId = agent.id;
+      const requestedAssistant = store.getMessage(oldAssistantId);
+      const lastAssistant = store.getLastActiveAssistantMessage(sessionId);
+      const oldAssistant = requestedAssistant?.sessionId === sessionId
+        && requestedAssistant.role === "assistant"
+        && requestedAssistant.status === "active"
+        ? requestedAssistant
+        : lastAssistant;
+      if (!oldAssistant) {
+        return sendJson(res, 404, { error: "没有可替换的最后一条 AI 回复。" });
+      }
+      if (!lastAssistant || Number(lastAssistant.id) !== Number(oldAssistant.id)) {
+        return sendJson(res, 409, { error: "只能替换最后一条 AI 回复。" });
+      }
+      const userMessage = oldAssistant.parentId ? store.getMessage(oldAssistant.parentId) : null;
+      if (!userMessage || userMessage.sessionId !== sessionId || userMessage.role !== "user" || userMessage.status !== "active") {
+        return sendJson(res, 409, { error: "找不到这条回复对应的用户消息。" });
+      }
+
+      traceLog(traceId, "chat.regenerate.start", { requestId, agentId: agent.id, oldAssistantId });
+      const quota = prepareChatAccess(modelConfig);
+      if (!quota.allowed && quota.code === "official_license_required") {
+        return sendAuthorizationRequired(res);
+      }
+      if (!quota.allowed) {
+        return sendJson(res, 429, {
+          error: quota.message,
+          code: "free_quota_exceeded",
+          quota
+        });
+      }
+
+      const message = userMessage.content;
+      const history = store.getActiveMessagesBefore({
+        sessionId,
+        beforeId: oldAssistant.id,
+        limit: 20
+      })
+        .filter((item) => item.id !== oldAssistant.id)
+        .map((item) => ({ role: item.role, content: item.content }));
+      const { retrievedMemories, retrievalPlan } = runCragRetrieval({
+        store,
+        agentId: agent.id,
+        message,
+        history,
+        limit: 8
+      });
+      const memory = store.getMemorySnapshot({ agentId: agent.id });
+
+      let turn;
+      try {
+        turn = await orchestrateCompanionTurn({
+          agent,
+          character,
+          memory,
+          retrievedMemories,
+          retrievalPlan,
+          message,
+          history,
+          llm: {
+            ...resolveChatModel(modelConfig),
+            imageOutputEnabled: modelConfig.imageOutputEnabled,
+            imageOutputAvailable: modelConfig.imageOutputAvailable,
+            image: {
+              baseUrl: modelConfig.imageBaseUrl,
+              apiKey: modelConfig.imageApiKey,
+              model: modelConfig.imageModel
+            }
+          },
+          modelConfig,
+          traceId
+        });
+      } catch (error) {
+        traceLog(traceId, "chat.regenerate.error", {
+          elapsedMs: Date.now() - chatStartedAt,
+          code: error.code || "",
+          status: error.status || "",
+          message: error.message
+        });
+        if (isQuotaOrBillingError(error)) {
+          return sendJson(res, error.code === "quota_exceeded" ? 402 : 401, {
+            error: error.publicMessage || publicQuotaMessage(error),
+            code: error.code || "quota_exceeded",
+            upgrade: buildUpgradePrompt(),
+            quota
+          });
+        }
+        if (error.code) {
+          return sendJson(res, Number(error.status || 500), {
+            error: error.publicMessage || error.message || "服务暂时不可用，请稍后再试。",
+            code: error.code
+          });
+        }
+        throw error;
+      }
+
+      traceLog(traceId, "chat.regenerate.success", {
+        elapsedMs: Date.now() - chatStartedAt,
+        replySource: turn.reply?.source || ""
+      });
+      sendJson(res, 200, finalizeRegeneratedChatTurn({
+        agent,
+        sessionId,
+        userMessage,
+        oldAssistant,
+        requestId,
+        reply: turn.reply,
+        orchestration: turn.orchestration,
+        retrievedMemories,
+        retrievalPlan,
+        quota
+      }));
     });
   }
 
@@ -670,7 +797,7 @@ async function handleApi(req, res, pathname) {
           imageEndpoint: image.endpoint || ""
         }
       });
-      sendJson(res, 200, { ok: true, image });
+      sendJson(res, 200, { ok: true, image, message: store.getMessage(messageId), message_id: messageId });
     } catch (error) {
       if (isQuotaOrBillingError(error)) {
         return sendJson(res, error.code === "quota_exceeded" ? 402 : 401, {
@@ -825,6 +952,10 @@ function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orc
       sessionId,
       role: "assistant",
       content: reply.text,
+      status: "active",
+      parentId: userMessageId,
+      variantGroupId: `variant:${userMessageId}`,
+      variantIndex: 0,
       mood: reply.mood,
       workflow: reply.workflow,
       safetyLevel: reply.safety?.level,
@@ -884,6 +1015,71 @@ function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orc
     quota: commitChatAccess(quota),
     saved,
     assistant_message_id: assistantMessageId
+  };
+}
+
+function finalizeRegeneratedChatTurn({ agent, sessionId, userMessage, oldAssistant, requestId, reply, orchestration, retrievedMemories, retrievalPlan, quota }) {
+  const outputs = orchestration?.outputs || [];
+  const hasVoiceOutput = outputs.some((output) => output.type === "voice");
+  const hasTextOutput = outputs.some((output) => output.type === "text");
+  const shouldPersistAssistantText = reply.source !== "tool:image.generate" && hasTextOutput && !hasVoiceOutput;
+  if (!shouldPersistAssistantText) {
+    return {
+      request_id: requestId,
+      reply,
+      orchestration,
+      outputs,
+      router: orchestration?.router || null,
+      agent,
+      memory: store.getMemorySnapshot({ agentId: agent.id }),
+      retrieved_memories: retrievedMemories,
+      retrieval_plan: retrievalPlan,
+      quota: commitChatAccess(quota),
+      regenerated: false,
+      old_assistant_message_id: oldAssistant.id,
+      assistant_message_id: null,
+      recent_messages: store.getRecentMessages(sessionId, 30)
+    };
+  }
+
+  const nextVariantIndex = Number(oldAssistant.variantIndex || 0) + 1;
+  const newAssistant = store.replaceAssistantMessage({
+    oldMessageId: oldAssistant.id,
+    newMessage: {
+      sessionId,
+      role: "assistant",
+      content: reply.text,
+      status: "active",
+      parentId: userMessage.id,
+      variantGroupId: oldAssistant.variantGroupId || `variant:${userMessage.id}`,
+      variantIndex: nextVariantIndex,
+      mood: reply.mood,
+      workflow: reply.workflow,
+      safetyLevel: reply.safety?.level,
+      source: reply.source,
+      metadata: {
+        regeneratedFrom: oldAssistant.id,
+        requestId
+      }
+    }
+  });
+
+  return {
+    request_id: requestId,
+    reply,
+    orchestration,
+    outputs,
+    router: orchestration?.router || null,
+    agent,
+    memory: store.getMemorySnapshot({ agentId: agent.id }),
+    retrieved_memories: retrievedMemories,
+    retrieval_plan: retrievalPlan,
+    quota: commitChatAccess(quota),
+    regenerated: true,
+    old_assistant_message_id: oldAssistant.id,
+    assistant_message_id: newAssistant.id,
+    assistant_message: newAssistant,
+    recent_messages: store.getRecentMessages(sessionId, 30)
   };
 }
 

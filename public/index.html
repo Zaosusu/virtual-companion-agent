@@ -133,6 +133,15 @@
             <div class="form-grid">
               <label>
                 <span>声音类型</span>
+                <select id="agentGender">
+                  <option value="female">女性</option>
+                  <option value="male">男性</option>
+                  <option value="nonbinary">非二元/中性</option>
+                  <option value="unspecified">不指定</option>
+                </select>
+              </label>
+              <label>
+                <span>声音类型</span>
                 <select id="agentVoiceGender">
                   <option value="girl">少女感</option>
                   <option value="female">温柔女声</option>
@@ -155,6 +164,32 @@
                 </select>
               </label>
             </div>
+            <div class="reference-upload chat-background-upload">
+              <label>
+                <span>&#32842;&#22825;&#32972;&#26223;&#22270;</span>
+                <input id="chatBackgroundInput" type="file" accept="image/png,image/jpeg,image/webp" />
+              </label>
+              <div class="reference-preview chat-background-preview" id="chatBackgroundPreview">
+                <span>&#26410;&#35774;&#32622;&#32972;&#26223;&#22270;</span>
+              </div>
+              <div class="form-grid">
+                <label>
+                  <span>&#32972;&#26223;&#28129;&#20837;</span>
+                  <input id="chatBackgroundOpacity" type="range" min="0" max="0.7" step="0.05" />
+                </label>
+                <label>
+                  <span>&#32972;&#26223;&#27169;&#31946;</span>
+                  <input id="chatBackgroundBlur" type="range" min="0" max="24" step="1" />
+                </label>
+              </div>
+              <button class="secondary" id="clearChatBackgroundButton" type="button">&#24674;&#22797;&#40664;&#35748;&#32972;&#26223;</button>
+              <p class="form-hint">&#27599;&#20010;&#35282;&#33394;&#21487;&#35774;&#32622;&#29420;&#31435;&#32972;&#26223;&#22270;&#65292;&#20445;&#23384;&#21518;&#21047;&#26032;&#20063;&#20250;&#20445;&#30041;&#12290;</p>
+            </div>
+            <div class="button-row two">
+              <button class="secondary" id="generateImageButton" type="button">生成图片</button>
+              <button class="secondary" id="speakLastButton" type="button">朗读最近回复</button>
+            </div>
+            <p class="form-hint" id="toolHint">图片和语音能力会跟随当前授权/模型配置。</p>
             <div class="reference-upload">
               <label>
                 <span>克隆声音样本</span>
@@ -191,6 +226,10 @@
                 <span>头像字</span>
                 <input id="agentAvatarInput" type="text" maxlength="2" />
               </label>
+            </div>
+            <div class="avatar-upload">
+              <input id="agentAvatarImageInput" type="file" accept="image/png,image/jpeg,image/webp" />
+              <button class="secondary" id="clearAvatarImageButton" type="button">清除头像图片</button>
             </div>
             <label>
               <span>角色名</span>
@@ -273,7 +312,13 @@
           </div>
           <form class="config-form" id="importForm">
             <textarea id="importText" rows="5" placeholder="粘贴导出的 JSON 角色包"></textarea>
-            <button type="submit">导入并切换</button>
+            <div class="button-row two">
+              <button type="submit">导入并切换</button>
+              <label class="import-button">
+                导入角色文件
+                <input id="importAgentInput" type="file" accept="application/json,.json" />
+              </label>
+            </div>
           </form>
         </section>
 

@@ -47,6 +47,14 @@ const modelConfigStatus = $("#modelConfigStatus");
 const modelConfigHint = $("#modelConfigHint");
 const experienceStatus = $("#experienceStatus");
 const experienceImageStyle = $("#experienceImageStyle");
+const chatBackgroundInput = $("#chatBackgroundInput");
+const chatBackgroundPreview = $("#chatBackgroundPreview");
+const chatBackgroundOpacity = $("#chatBackgroundOpacity");
+const chatBackgroundBlur = $("#chatBackgroundBlur");
+const clearChatBackgroundButton = $("#clearChatBackgroundButton");
+const generateImageButton = $("#generateImageButton");
+const speakLastButton = $("#speakLastButton");
+const toolHint = $("#toolHint");
 const agentVoiceGender = $("#agentVoiceGender");
 const agentVoiceTone = $("#agentVoiceTone");
 const voiceCloneInput = $("#voiceCloneInput");
@@ -58,7 +66,10 @@ const clearClonedVoiceButton = $("#clearClonedVoiceButton");
 const agentConfigForm = $("#agentConfigForm");
 const agentConfigStatus = $("#agentConfigStatus");
 const agentId = $("#agentId");
+const agentGender = $("#agentGender");
 const agentAvatarInput = $("#agentAvatarInput");
+const agentAvatarImageInput = $("#agentAvatarImageInput");
+const clearAvatarImageButton = $("#clearAvatarImageButton");
 const agentName = $("#agentName");
 const agentTagline = $("#agentTagline");
 const agentPersona = $("#agentPersona");
@@ -78,6 +89,7 @@ const agentPrompts = $("#agentPrompts");
 const agentBoundaries = $("#agentBoundaries");
 const agentSafetyRules = $("#agentSafetyRules");
 const exportAgentButton = $("#exportAgentButton");
+const importAgentInput = $("#importAgentInput");
 const deleteAgentButton = $("#deleteAgentButton");
 const importForm = $("#importForm");
 const importText = $("#importText");
@@ -95,11 +107,16 @@ let state = {
   modelConfig: null,
   authUser: null,
   memory: null,
+  regeneratingMessageId: null,
+  pendingAvatarImage: null,
   pendingReferenceImage: null,
   pendingAppearanceImage: null,
+  pendingChatBackground: null,
   pendingVoiceSample: null,
   authMode: "login",
+  clearAvatarImage: false,
   clearReferenceImage: false,
+  clearChatBackground: false,
   experienceSaveTimer: null,
   oldestMessageId: null,
   hasMoreMessages: true,
@@ -195,6 +212,7 @@ newAgentButton.addEventListener("click", async () => {
     name: "新角色",
     avatar: "新",
     category: "custom",
+    gender: "female",
     tagline: "一句话描述这个角色",
     persona: "写下这个角色是谁、擅长什么，以及和用户是什么关系。",
     appearance: "写下角色的发型、脸部特征、穿搭和整体气质。",
@@ -202,9 +220,10 @@ newAgentButton.addEventListener("click", async () => {
     relationship: "亲近但有边界。",
     openingMessage: "我在。你想让我怎么陪你？",
     systemPrompt: "请完全按照人设进行第一人称沉浸式对话。日常聊天不要跳出角色，不要解释自己是系统或模型。",
-    imageStyle: "realistic",
-    visualContext: "",
-    referenceImage: null,
+  imageStyle: "realistic",
+  visualContext: "",
+  avatarImage: null,
+  referenceImage: null,
     prompts: ["陪我聊聊", "帮我拆一个计划"],
     boundaries: ["不做现实身份验证、线下承诺或现实关系承诺"],
     safetyRules: ["出现自伤风险时优先安全降级"]
@@ -300,7 +319,9 @@ agentConfigForm.addEventListener("submit", async (event) => {
 
 exportAgentButton.addEventListener("click", async () => {
   const result = await api(`/api/agents/${encodeURIComponent(state.activeAgentId)}`);
-  importText.value = JSON.stringify(result.pack, null, 2);
+  const text = JSON.stringify(result.pack, null, 2);
+  importText.value = text;
+  downloadText(text, `${state.activeAgent?.id || "agent"}-pack.json`);
   addMessage("system", "角色包已生成在右侧导入框，可直接复制。");
 });
 
@@ -309,10 +330,23 @@ deleteAgentButton.addEventListener("click", async () => {
     addMessage("system", "内置角色不能删除，可以先复制再修改。");
     return;
   }
-  const result = await api(`/api/agents/${encodeURIComponent(state.activeAgentId)}`, { method: "DELETE" });
-  state.agents = result.agents;
-  state.activeAgentId = result.active_agent_id;
-  await activateAgent(state.activeAgentId);
+  if (!confirm(`删除角色「${state.activeAgent.name}」？`)) return;
+  deleteAgentButton.disabled = true;
+  try {
+    const result = await api(`/api/agents/${encodeURIComponent(state.activeAgentId)}`, { method: "DELETE" });
+    state.agents = result.agents || [];
+    state.activeAgentId = result.active_agent_id;
+    if (state.activeAgentId) {
+      await activateAgent(state.activeAgentId);
+    } else {
+      state.activeAgent = null;
+      renderAll();
+    }
+    addMessage("system", "角色已删除。");
+  } catch (error) {
+    addMessage("system", `删除失败：${error.message}`);
+    renderAgent();
+  }
 });
 
 importForm.addEventListener("submit", async (event) => {
@@ -323,6 +357,23 @@ importForm.addEventListener("submit", async (event) => {
   const result = await api("/api/agents/import", { method: "POST", body: JSON.stringify({ pack }) });
   await applyAgentResult(result);
   addMessage("system", "角色包已导入并切换。");
+});
+
+importAgentInput?.addEventListener("change", async () => {
+  const file = importAgentInput.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    importText.value = text;
+    const pack = JSON.parse(text);
+    const result = await api("/api/agents/import", { method: "POST", body: JSON.stringify({ pack }) });
+    await applyAgentResult(result);
+    addMessage("system", "角色文件已导入并切换。");
+  } catch (error) {
+    addMessage("system", `角色文件导入失败：${error.message}`);
+  } finally {
+    importAgentInput.value = "";
+  }
 });
 
 personaCorpusFile.addEventListener("change", async () => {
@@ -427,7 +478,102 @@ testTtsButton.addEventListener("click", async () => {
   await playSpeech("我在。今天想让我用什么语气陪你？", testTtsButton);
 });
 
+generateImageButton?.addEventListener("click", generateCharacterImage);
+speakLastButton?.addEventListener("click", () => speakLastAssistant(speakLastButton));
+
 experienceImageStyle.addEventListener("change", () => {
+  queueExperienceSave();
+});
+
+agentAvatarImageInput?.addEventListener("change", async () => {
+  const file = agentAvatarImageInput.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    addMessage("system", "头像图片必须是图片文件。");
+    agentAvatarImageInput.value = "";
+    return;
+  }
+  state.pendingAvatarImage = await readImageFile(file);
+  state.clearAvatarImage = false;
+  state.activeAgent = {
+    ...state.activeAgent,
+    avatarImage: state.pendingAvatarImage
+  };
+  renderAvatarNode(agentAvatarEl, state.activeAgent);
+  await saveAgentForm(new Event("submit"));
+});
+
+clearAvatarImageButton?.addEventListener("click", async () => {
+  if (!state.activeAgent) return;
+  state.pendingAvatarImage = null;
+  state.clearAvatarImage = true;
+  state.activeAgent = {
+    ...state.activeAgent,
+    avatarImage: null
+  };
+  agentAvatarImageInput.value = "";
+  renderAvatarNode(agentAvatarEl, state.activeAgent);
+  await saveAgentForm(new Event("submit"));
+});
+
+agentGender?.addEventListener("change", () => {
+  if (state.activeAgent) state.activeAgent.gender = agentGender.value;
+  queueExperienceSave();
+});
+
+chatBackgroundInput.addEventListener("change", async () => {
+  const file = chatBackgroundInput.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    addMessage("system", "聊天背景必须是图片文件。");
+    chatBackgroundInput.value = "";
+    return;
+  }
+  if (file.size > 6 * 1024 * 1024) {
+    addMessage("system", "聊天背景图太大了，请控制在 6MB 以内。");
+    chatBackgroundInput.value = "";
+    return;
+  }
+  state.pendingChatBackground = await readImageFile(file);
+  state.clearChatBackground = false;
+  renderChatBackgroundPreview(state.pendingChatBackground, "保存中...");
+  applyChatBackground({
+    ...state.activeAgent,
+    chatBackground: state.pendingChatBackground,
+    chatBackgroundOpacity: Number(chatBackgroundOpacity.value || 0),
+    chatBackgroundBlur: Number(chatBackgroundBlur.value || 0)
+  });
+  queueExperienceSave();
+});
+
+clearChatBackgroundButton.addEventListener("click", () => {
+  state.pendingChatBackground = null;
+  state.clearChatBackground = true;
+  chatBackgroundInput.value = "";
+  renderChatBackgroundPreview(null, "保存中...");
+  applyChatBackground({ ...state.activeAgent, chatBackground: null });
+  queueExperienceSave();
+});
+
+chatBackgroundOpacity.addEventListener("input", () => {
+  if (state.activeAgent) {
+    state.activeAgent.chatBackgroundOpacity = Number(chatBackgroundOpacity.value || 0);
+    applyChatBackground({
+      ...state.activeAgent,
+      chatBackground: state.pendingChatBackground || state.activeAgent.chatBackground
+    });
+  }
+  queueExperienceSave();
+});
+
+chatBackgroundBlur.addEventListener("input", () => {
+  if (state.activeAgent) {
+    state.activeAgent.chatBackgroundBlur = Number(chatBackgroundBlur.value || 0);
+    applyChatBackground({
+      ...state.activeAgent,
+      chatBackground: state.pendingChatBackground || state.activeAgent.chatBackground
+    });
+  }
   queueExperienceSave();
 });
 
@@ -509,11 +655,26 @@ async function activateAgent(id) {
 }
 
 async function applyAgentResult(result) {
+  const backgroundBeforeApply = state.clearChatBackground
+    ? null
+    : state.pendingChatBackground || state.activeAgent?.chatBackground || null;
+  const backgroundOpacityBeforeApply = Number(
+    chatBackgroundOpacity?.value || state.activeAgent?.chatBackgroundOpacity || 0.18
+  );
+  const backgroundBlurBeforeApply = Number(
+    chatBackgroundBlur?.value || state.activeAgent?.chatBackgroundBlur || 0
+  );
+
   state.agents = result.agents || state.agents;
   state.activeAgentId = result.active_agent_id || result.agent?.id || state.activeAgentId;
-  state.activeAgent = result.agent || state.activeAgent;
+  const nextAgent = result.agent || state.activeAgent;
+  if (nextAgent && backgroundBeforeApply && !nextAgent.chatBackground) {
+    nextAgent.chatBackground = backgroundBeforeApply;
+    nextAgent.chatBackgroundOpacity = backgroundOpacityBeforeApply;
+    nextAgent.chatBackgroundBlur = backgroundBlurBeforeApply;
+  }
+  state.activeAgent = nextAgent;
   if (result.model_config) state.modelConfig = result.model_config;
-  if (result.agent) state.activeAgent = result.agent;
   renderAll();
 }
 
@@ -536,6 +697,108 @@ async function sendMessage(text) {
   }
 }
 
+async function regenerateLastAssistant(messageId) {
+  if (state.regeneratingMessageId || pendingChatCount > 0) return;
+  const id = Number(messageId);
+  if (!Number.isFinite(id)) return;
+  state.regeneratingMessageId = id;
+  setBusy(true);
+  refreshRegenerateButtons();
+  try {
+    const result = await api("/api/chat/regenerate", {
+      method: "POST",
+      body: JSON.stringify({
+        message_id: id,
+        requestId: `req_regen_${Date.now().toString(36)}`
+      })
+    });
+    state.memory = result.memory || state.memory;
+    state.activeAgent = result.agent || state.activeAgent;
+    renderRag(result.retrieved_memories || []);
+    renderMemory();
+    if (result.recent_messages) {
+      renderConversation(result.recent_messages);
+    } else {
+      renderAssistantOutputs(result);
+    }
+  } catch (error) {
+    addMessage("system", `重新生成失败：${friendlyErrorMessage(error)}`);
+  } finally {
+    state.regeneratingMessageId = null;
+    setBusy(false);
+    refreshRegenerateButtons();
+  }
+}
+
+async function generateCharacterImage() {
+  if (!state.activeAgent) return;
+  const oldText = generateImageButton.textContent;
+  generateImageButton.disabled = true;
+  generateImageButton.textContent = "生成中...";
+  if (toolHint) toolHint.textContent = "正在生成图片...";
+  try {
+    const agent = readAgentForm();
+    const prompt = buildCharacterImagePrompt(agent);
+    const result = await api("/api/image", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt,
+        content: "给你发来一张图片。",
+        agent
+      })
+    });
+    const image = result.image || {};
+    const savedMessage = result.message || null;
+    addMessage("assistant", savedMessage?.content || "给你发来一张图片。", {
+      meta: `${state.activeAgent.name} · 图片`,
+      messageId: savedMessage?.id || result.message_id,
+      metadata: {
+        type: "image",
+        imageUrl: savedMessage?.metadata?.imageUrl || image.url || "",
+        b64Json: savedMessage?.metadata?.b64Json || image.b64Json || "",
+        prompt,
+        source: "tool:image.generate"
+      }
+    });
+    if (toolHint) toolHint.textContent = "图片已生成。";
+  } catch (error) {
+    if (toolHint) toolHint.textContent = error.message;
+    addMessage("system", `图片生成失败：${error.message}`);
+  } finally {
+    generateImageButton.textContent = oldText;
+    generateImageButton.disabled = false;
+  }
+}
+
+async function speakLastAssistant(button) {
+  const node = Array.from(messagesEl.querySelectorAll(".message.assistant")).reverse()
+    .find((item) => item.querySelector(".message-body")?.textContent?.trim());
+  const text = node?.querySelector(".message-body")?.textContent?.trim() || "";
+  if (!text) {
+    if (toolHint) toolHint.textContent = "还没有可朗读的回复。";
+    return;
+  }
+  await playSpeech(text, button);
+}
+
+function buildCharacterImagePrompt(agent) {
+  const genderMap = {
+    female: "女性",
+    male: "男性",
+    nonbinary: "非二元/中性",
+    unspecified: ""
+  };
+  return [
+    `生成虚拟角色「${agent.name || "角色"}」的图片。`,
+    genderMap[agent.gender] ? `角色性别/性别表达：${genderMap[agent.gender]}` : "",
+    agent.persona ? `人设：${agent.persona}` : "",
+    agent.appearance ? `外貌特征：${agent.appearance}` : "",
+    agent.visualContext ? `默认视觉场景：${agent.visualContext}` : "",
+    agent.imageStyle === "anime" ? "整体风格：二次元插画。" : "整体风格：真人感照片。",
+    "画面自然，脸部清晰，不要文字、水印或畸形肢体。"
+  ].filter(Boolean).join("\n");
+}
+
 function enqueueMessage(text) {
   pendingChatCount += 1;
   setBusy(true);
@@ -545,7 +808,9 @@ function enqueueMessage(text) {
     .finally(() => {
       pendingChatCount = Math.max(0, pendingChatCount - 1);
       if (pendingChatCount === 0) setBusy(false);
+      refreshRegenerateButtons();
     });
+  refreshRegenerateButtons();
   return chatQueue;
 }
 
@@ -595,6 +860,7 @@ function renderConversation(messages) {
     return;
   }
   const visibleMessages = collapseVoiceTextPairs(messages);
+  const lastAssistantId = lastRefreshableAssistantId(visibleMessages);
   for (const message of visibleMessages) {
     addMessage(message.role, message.content, {
       messageId: message.id,
@@ -603,7 +869,8 @@ function renderConversation(messages) {
         : message.role === "user"
           ? "你"
           : "系统",
-      metadata: message.metadata || {}
+      metadata: message.metadata || {},
+      canRegenerate: message.id === lastAssistantId
     });
   }
 }
@@ -641,7 +908,8 @@ function prependMessages(messages) {
         : message.role === "user"
           ? "你"
           : "系统",
-      metadata: message.metadata || {}
+      metadata: message.metadata || {},
+      canRegenerate: false
     }));
   }
   messagesEl.prepend(fragment);
@@ -654,11 +922,22 @@ function firstMessageId(messages = []) {
 
 function collapseVoiceTextPairs(messages) {
   return (messages || []).filter((message, index, list) => {
+    if (message.status && message.status !== "active") return false;
     if (message.source === "tool:image.generate" && message.metadata?.type !== "image") return false;
     if (message.role !== "assistant" || message.metadata?.type === "voice") return true;
     const next = list[index + 1];
     return !(next?.metadata?.type === "voice" && next.content === message.content);
   });
+}
+
+function lastRefreshableAssistantId(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && (message.status || "active") === "active" && message.metadata?.type !== "voice") {
+      return message.id;
+    }
+  }
+  return null;
 }
 
 async function runFrontAgents({ userText, result }) {
@@ -751,7 +1030,9 @@ function renderAssistantOutputs(result, quotaText = "", options = {}) {
     if (options.skipText && output.type === "text") continue;
     if (output.type === "text" && String(output.text || "").trim()) {
       addMessage("assistant", output.text, {
-        meta: baseMeta
+        meta: baseMeta,
+        messageId: result.assistant_message_id,
+        canRegenerate: Boolean(result.assistant_message_id)
       });
     }
     if (output.type === "image") {
@@ -789,12 +1070,13 @@ function renderAgentList() {
     button.className = `agent-card${agent.id === state.activeAgentId ? " active" : ""}`;
     button.type = "button";
     button.innerHTML = `
-      <span class="mini-avatar">${escapeHtml(agent.avatar || agent.name.slice(0, 1))}</span>
+      <span class="mini-avatar"></span>
       <span>
         <strong>${escapeHtml(agent.name)}</strong>
         <small>${escapeHtml(agent.tagline || agent.category)}</small>
       </span>
     `;
+    renderAvatarNode(button.querySelector(".mini-avatar"), agent);
     button.addEventListener("click", () => activateAgent(agent.id));
     agentList.appendChild(button);
   }
@@ -804,13 +1086,22 @@ function renderAgent() {
   const agent = state.activeAgent;
   if (!agent) return;
   agentTitleEl.textContent = agent.name;
-  agentAvatarEl.textContent = agent.avatar || agent.name.slice(0, 1);
+  renderAvatarNode(agentAvatarEl, agent);
   input.placeholder = `跟${agent.name}说点什么...`;
   agentId.value = agent.id;
   agentId.disabled = Boolean(agent.isBuiltin);
   agentAvatarInput.value = agent.avatar || "";
+  state.pendingAvatarImage = null;
+  state.clearAvatarImage = false;
+  if (agentAvatarImageInput) agentAvatarImageInput.value = "";
+  if (clearAvatarImageButton) clearAvatarImageButton.disabled = !agent.avatarImage;
   agentName.value = agent.name || "";
   agentTagline.value = agent.tagline || "";
+  if (agentGender) {
+    agentGender.value = normalizeAgentGender(agent.gender, agent.voiceGender);
+    const label = agentGender.closest("label")?.querySelector("span");
+    if (label) label.textContent = "角色性别";
+  }
   agentPersona.value = agent.persona || "";
   agentAppearance.value = agent.appearance || "";
   agentVoiceStyle.value = agent.voiceStyle || "";
@@ -818,18 +1109,25 @@ function renderAgent() {
   agentOpening.value = agent.openingMessage || "";
   agentSystemPrompt.value = agent.systemPrompt || "";
   experienceImageStyle.value = agent.imageStyle || "realistic";
+  chatBackgroundOpacity.value = String(agent.chatBackgroundOpacity ?? 0.18);
+  chatBackgroundBlur.value = String(agent.chatBackgroundBlur ?? 0);
   agentVoiceGender.value = agent.voiceGender || "female";
   agentVoiceTone.value = agent.voiceTone || "warm";
   agentVisualContext.value = agent.visualContext || "";
   state.pendingReferenceImage = null;
   state.pendingAppearanceImage = null;
+  state.pendingChatBackground = null;
   state.pendingVoiceSample = null;
   state.clearReferenceImage = false;
+  state.clearChatBackground = false;
   agentReferenceImageInput.value = "";
+  chatBackgroundInput.value = "";
   appearanceImageInput.value = "";
   voiceCloneInput.value = "";
   voiceSampleText.value = "";
   renderReferencePreview(agent.referenceImage || null);
+  renderChatBackgroundPreview(agent.chatBackground || null);
+  applyChatBackground(agent);
   renderVoiceClonePreview({
     name: agent.voiceSampleName || "",
     clonedVoiceId: agent.clonedVoiceId || ""
@@ -1106,6 +1404,9 @@ function queueExperienceSave() {
 
 async function saveExperienceSettings() {
   if (!state.activeAgent) return;
+  const backgroundBeforeSave = state.clearChatBackground
+    ? null
+    : state.pendingChatBackground || state.activeAgent?.chatBackground || null;
   try {
     const result = await api("/api/config", {
       method: "POST",
@@ -1113,14 +1414,30 @@ async function saveExperienceSettings() {
         agent: {
           id: state.activeAgent.id,
           imageStyle: experienceImageStyle.value,
+          chatBackground: state.clearChatBackground ? null : state.pendingChatBackground || state.activeAgent?.chatBackground || null,
+          clearChatBackground: state.clearChatBackground,
+          chatBackgroundOpacity: Number(chatBackgroundOpacity.value || 0),
+          chatBackgroundBlur: Number(chatBackgroundBlur.value || 0),
+          gender: agentGender?.value || state.activeAgent.gender || "unspecified",
           voiceGender: agentVoiceGender.value,
           voiceTone: agentVoiceTone.value
         }
       })
     });
     state.activeAgent = result.agent || state.activeAgent;
+    if (backgroundBeforeSave && !state.activeAgent.chatBackground) {
+      state.activeAgent.chatBackground = backgroundBeforeSave;
+      state.activeAgent.chatBackgroundOpacity = Number(chatBackgroundOpacity.value || 0);
+      state.activeAgent.chatBackgroundBlur = Number(chatBackgroundBlur.value || 0);
+    }
     state.agents = result.agents || state.agents;
+    if (state.activeAgent.chatBackground) {
+      state.pendingChatBackground = null;
+      state.clearChatBackground = false;
+    }
     renderAgentList();
+    renderChatBackgroundPreview(state.activeAgent?.chatBackground || null);
+    applyChatBackground(state.activeAgent);
     renderStatus();
     experienceStatus.textContent = "已保存";
   } catch (error) {
@@ -1221,7 +1538,33 @@ function createMessageNode(role, content, options = {}) {
   } else {
     body.textContent = content;
   }
+  if (options.canRegenerate && role === "assistant" && options.messageId) {
+    const actions = document.createElement("div");
+    actions.className = "message-actions regenerate-actions";
+    const regenerateButton = document.createElement("button");
+    regenerateButton.type = "button";
+    regenerateButton.className = "regenerate-button";
+    regenerateButton.dataset.messageId = String(options.messageId);
+    regenerateButton.textContent = state.regeneratingMessageId === Number(options.messageId) ? "\u6b63\u5728\u6362..." : "\u6362\u4e00\u53e5";
+    regenerateButton.textContent = state.regeneratingMessageId === Number(options.messageId) ? "正在换..." : "换一句";
+    regenerateButton.disabled = Boolean(state.regeneratingMessageId || pendingChatCount > 0);
+    regenerateButton.textContent = state.regeneratingMessageId === Number(options.messageId) ? "\u6b63\u5728\u6362..." : "\u6362\u4e00\u53e5";
+    regenerateButton.addEventListener("click", () => regenerateLastAssistant(options.messageId));
+    actions.appendChild(regenerateButton);
+    node.appendChild(actions);
+  }
   return node;
+}
+
+function refreshRegenerateButtons() {
+  for (const button of messagesEl.querySelectorAll(".regenerate-button")) {
+    const id = Number(button.dataset.messageId || 0);
+    const isRegenerating = state.regeneratingMessageId === id;
+    button.textContent = isRegenerating ? "\u6b63\u5728\u6362..." : "\u6362\u4e00\u53e5";
+    button.textContent = isRegenerating ? "正在换..." : "换一句";
+    button.disabled = Boolean(state.regeneratingMessageId || pendingChatCount > 0);
+    button.textContent = isRegenerating ? "\u6b63\u5728\u6362..." : "\u6362\u4e00\u53e5";
+  }
 }
 
 async function deleteMessage(messageId, node) {
@@ -1485,13 +1828,22 @@ function readAgentForm() {
   const referenceImage = state.clearReferenceImage
     ? null
     : state.pendingReferenceImage || state.activeAgent?.referenceImage || null;
+  const chatBackground = state.clearChatBackground
+    ? null
+    : state.pendingChatBackground || state.activeAgent?.chatBackground || null;
+  const avatarImage = state.clearAvatarImage
+    ? null
+    : state.pendingAvatarImage || state.activeAgent?.avatarImage || null;
   return {
     id: agentId.value.trim(),
     avatar: agentAvatarInput.value.trim(),
+    avatarImage,
+    clearAvatarImage: state.clearAvatarImage,
     name: agentName.value.trim(),
     category: state.activeAgent?.category || "custom",
     tagline: agentTagline.value.trim(),
     persona: agentPersona.value.trim(),
+    gender: agentGender?.value || "unspecified",
     appearance: agentAppearance.value.trim(),
     voiceStyle: agentVoiceStyle.value.trim(),
     relationship: agentRelationship.value.trim(),
@@ -1505,6 +1857,10 @@ function readAgentForm() {
     voiceSampleName: state.activeAgent?.voiceSampleName || "",
     referenceImage,
     clearReferenceImage: state.clearReferenceImage,
+    chatBackground,
+    clearChatBackground: state.clearChatBackground,
+    chatBackgroundOpacity: Number(chatBackgroundOpacity.value || state.activeAgent?.chatBackgroundOpacity || 0.18),
+    chatBackgroundBlur: Number(chatBackgroundBlur.value || state.activeAgent?.chatBackgroundBlur || 0),
     prompts: lines(agentPrompts.value),
     boundaries: lines(agentBoundaries.value),
     safetyRules: lines(agentSafetyRules.value),
@@ -1553,6 +1909,61 @@ function renderReferencePreview(referenceImage, statusText = "") {
   meta.append(name, status);
   agentReferencePreview.append(img, meta);
   clearReferenceImageButton.disabled = false;
+}
+
+function renderChatBackgroundPreview(background, statusText = "") {
+  chatBackgroundPreview.innerHTML = "";
+  if (!background?.data) {
+    const empty = document.createElement("span");
+    empty.textContent = statusText || "未设置背景图";
+    chatBackgroundPreview.appendChild(empty);
+    clearChatBackgroundButton.disabled = true;
+    return;
+  }
+  const img = document.createElement("img");
+  img.alt = "聊天背景图";
+  img.src = toDataUrl(background);
+  const meta = document.createElement("span");
+  meta.className = "reference-meta";
+  const name = document.createElement("strong");
+  name.textContent = background.name || "已上传背景图";
+  const status = document.createElement("small");
+  status.textContent = statusText || "已保存为当前角色聊天背景";
+  meta.append(name, status);
+  chatBackgroundPreview.append(img, meta);
+  clearChatBackgroundButton.disabled = false;
+}
+
+function renderAvatarNode(node, agent = {}) {
+  if (!node) return;
+  node.innerHTML = "";
+  const image = agent.avatarImage;
+  if (image?.data) {
+    const img = document.createElement("img");
+    img.src = toDataUrl(image);
+    img.alt = agent.name ? `${agent.name}头像` : "角色头像";
+    node.classList.add("has-avatar-image");
+    node.appendChild(img);
+    return;
+  }
+  node.classList.remove("has-avatar-image");
+  node.textContent = agent.avatar || agent.name?.slice(0, 1) || "AI";
+}
+
+function applyChatBackground(agent = state.activeAgent) {
+  const panel = document.querySelector(".chat-panel");
+  const background = agent?.chatBackground;
+  if (!panel || !background?.data) {
+    panel?.classList.remove("has-chat-background");
+    panel?.style.removeProperty("--chat-bg-image");
+    return;
+  }
+  const opacity = Math.min(0.7, Math.max(0, Number(agent.chatBackgroundOpacity ?? 0.18)));
+  const blur = Math.min(24, Math.max(0, Number(agent.chatBackgroundBlur ?? 0)));
+  panel.classList.add("has-chat-background");
+  panel.style.setProperty("--chat-bg-image", `url("${toDataUrl(background)}")`);
+  panel.style.setProperty("--chat-bg-opacity", String(opacity));
+  panel.style.setProperty("--chat-bg-blur", `${blur}px`);
 }
 
 async function analyzeAppearanceFromImage({
@@ -1777,6 +2188,24 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function downloadText(text, filename) {
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function normalizeAgentGender(value, voiceGender = "") {
+  const gender = String(value || "").trim();
+  if (["female", "male", "nonbinary", "unspecified"].includes(gender)) return gender;
+  if (["boy", "male", "deep_male"].includes(voiceGender)) return "male";
+  if (["girl", "female", "mature_female"].includes(voiceGender)) return "female";
+  return "unspecified";
 }
 
 async function api(url, options = {}) {

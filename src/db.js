@@ -1,15 +1,24 @@
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildFtsQuery, cosineSimilarity, embedText, searchableText } from "./rag.js";
 
+const CURRENT_SCHEMA_VERSION = 3;
+
 export class CompanionStore {
   constructor(dbPath) {
     mkdirSync(path.dirname(dbPath), { recursive: true });
+    this.dbPath = dbPath;
+    this.databaseExisted = existsSync(dbPath);
+    this.migrationBackupPath = "";
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA busy_timeout = 5000;");
     this.enableWalMode();
     this.db.exec("PRAGMA foreign_keys = ON;");
+    this.initialSchemaVersion = this.readExistingSchemaVersion();
+    if (this.databaseExisted && this.initialSchemaVersion < CURRENT_SCHEMA_VERSION) {
+      this.backupBeforeMigration(this.initialSchemaVersion);
+    }
     this.initSchema();
   }
 
@@ -91,6 +100,10 @@ export class CompanionStore {
         category TEXT NOT NULL DEFAULT 'custom',
         tagline TEXT NOT NULL DEFAULT '',
         persona TEXT NOT NULL,
+        gender TEXT NOT NULL DEFAULT 'female',
+        avatar_image_data TEXT NOT NULL DEFAULT '',
+        avatar_image_mime TEXT NOT NULL DEFAULT '',
+        avatar_image_name TEXT NOT NULL DEFAULT '',
         appearance TEXT NOT NULL DEFAULT '',
         voice_style TEXT NOT NULL DEFAULT '',
         relationship TEXT NOT NULL DEFAULT '',
@@ -103,6 +116,11 @@ export class CompanionStore {
         reference_image_data TEXT NOT NULL DEFAULT '',
         reference_image_mime TEXT NOT NULL DEFAULT '',
         reference_image_name TEXT NOT NULL DEFAULT '',
+        chat_background_data TEXT NOT NULL DEFAULT '',
+        chat_background_mime TEXT NOT NULL DEFAULT '',
+        chat_background_name TEXT NOT NULL DEFAULT '',
+        chat_background_opacity REAL NOT NULL DEFAULT 0.18,
+        chat_background_blur INTEGER NOT NULL DEFAULT 0,
         boundaries_json TEXT NOT NULL DEFAULT '[]',
         safety_rules_json TEXT NOT NULL DEFAULT '[]',
         prompts_json TEXT NOT NULL DEFAULT '[]',
@@ -116,13 +134,19 @@ export class CompanionStore {
         session_id TEXT NOT NULL DEFAULT 'default',
         role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
         content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        parent_id INTEGER,
+        variant_group_id TEXT NOT NULL DEFAULT '',
+        variant_index INTEGER NOT NULL DEFAULT 0,
+        replaced_by INTEGER,
         mood TEXT,
         workflow TEXT,
         safety_level TEXT,
         source TEXT,
         metadata_json TEXT NOT NULL DEFAULT '{}',
         compressed_at TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE IF NOT EXISTS memories (
@@ -159,19 +183,91 @@ export class CompanionStore {
         searchable_text,
         tokenize = 'unicode61'
       );
-
-      CREATE INDEX IF NOT EXISTS idx_messages_session_time ON messages(session_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_messages_compression ON messages(session_id, compressed_at, id);
-      CREATE INDEX IF NOT EXISTS idx_memories_kind_status ON memories(kind, status, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_chunks_memory ON memory_chunks(memory_id);
-      CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category, updated_at DESC);
     `);
 
+    const schemaVersion = this.getSchemaVersion();
+    if (schemaVersion < CURRENT_SCHEMA_VERSION) {
+      this.migrateToLatestSchema(schemaVersion);
+    }
+    this.ensureIndexes();
+
+    this.setProfileDefault("timezone", "Asia/Shanghai");
+    this.setProfileDefault("language", "zh-CN");
+    this.setProfileDefault("name", "");
+    this.db.prepare("INSERT OR IGNORE INTO model_config (id) VALUES (1)").run();
+    this.db.prepare("INSERT OR IGNORE INTO agent_config (id) VALUES (1)").run();
+    this.seedBuiltInAgents();
+  }
+
+  getSchemaVersion() {
+    return Number.parseInt(this.getMeta("schema_version", "0"), 10) || 0;
+  }
+
+  readExistingSchemaVersion() {
+    const hasMeta = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'
+    `).get();
+    if (!hasMeta) return 0;
+    return Number.parseInt(
+      this.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()?.value || "0",
+      10
+    ) || 0;
+  }
+
+  setSchemaVersion(version) {
+    this.setMeta("schema_version", String(version));
+  }
+
+  migrateToLatestSchema(fromVersion) {
+    const backupPath = this.backupBeforeMigration(fromVersion);
+    try {
+      this.db.exec("BEGIN IMMEDIATE;");
+      if (fromVersion < 3) this.migrateTo3();
+      this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
+      this.db.exec("COMMIT;");
+      if (backupPath) console.log(`[db] schema migrated ${fromVersion} -> ${CURRENT_SCHEMA_VERSION}; backup: ${backupPath}`);
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK;");
+      } catch {}
+      error.message = `Database migration failed from schema ${fromVersion} to ${CURRENT_SCHEMA_VERSION}: ${error.message}`;
+      throw error;
+    }
+  }
+
+  backupBeforeMigration(fromVersion) {
+    if (!this.databaseExisted || this.migrationBackupPath) return this.migrationBackupPath;
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(FULL);");
+    } catch {}
+    const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+    const backupPath = `${this.dbPath}.bak-v${fromVersion}-to-v${CURRENT_SCHEMA_VERSION}-${stamp}`;
+    copyFileSync(this.dbPath, backupPath);
+    this.migrationBackupPath = backupPath;
+    return backupPath;
+  }
+
+  migrateTo3() {
     this.ensureColumn("messages", "compressed_at", "TEXT");
     this.ensureColumn("messages", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
+    this.ensureColumn("messages", "status", "TEXT NOT NULL DEFAULT 'active'");
+    this.ensureColumn("messages", "parent_id", "INTEGER");
+    this.ensureColumn("messages", "variant_group_id", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("messages", "variant_index", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("messages", "replaced_by", "INTEGER");
+    this.ensureColumn("messages", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
     this.ensureColumn("agents", "image_style", "TEXT NOT NULL DEFAULT 'realistic'");
+    this.ensureColumn("agents", "tagline", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "gender", "TEXT NOT NULL DEFAULT 'female'");
+    this.ensureColumn("agents", "avatar_image_data", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "avatar_image_mime", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "avatar_image_name", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("agents", "appearance", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("agents", "visual_context", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "voice_style", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "relationship", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "opening_message", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "system_prompt", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("agents", "voice_gender", "TEXT NOT NULL DEFAULT 'female'");
     this.ensureColumn("agents", "voice_tone", "TEXT NOT NULL DEFAULT 'warm'");
     this.ensureColumn("agents", "cloned_voice_id", "TEXT NOT NULL DEFAULT ''");
@@ -179,6 +275,11 @@ export class CompanionStore {
     this.ensureColumn("agents", "reference_image_data", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("agents", "reference_image_mime", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("agents", "reference_image_name", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "chat_background_data", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "chat_background_mime", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "chat_background_name", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "chat_background_opacity", "REAL NOT NULL DEFAULT 0.18");
+    this.ensureColumn("agents", "chat_background_blur", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("model_config", "image_output_enabled", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("model_config", "image_base_url", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("model_config", "image_api_key", "TEXT NOT NULL DEFAULT ''");
@@ -201,19 +302,16 @@ export class CompanionStore {
     this.ensureColumn("model_config", "audio_return_url", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("model_config", "audio_timestamp", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("model_config", "audio_extra_body", "TEXT NOT NULL DEFAULT '{}'");
+  }
 
-    this.db.prepare(`
-      INSERT INTO meta (key, value)
-      VALUES ('schema_version', '2')
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run();
-
-    this.setProfileDefault("timezone", "Asia/Shanghai");
-    this.setProfileDefault("language", "zh-CN");
-    this.setProfileDefault("name", "");
-    this.db.prepare("INSERT OR IGNORE INTO model_config (id) VALUES (1)").run();
-    this.db.prepare("INSERT OR IGNORE INTO agent_config (id) VALUES (1)").run();
-    this.seedBuiltInAgents();
+  ensureIndexes() {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_session_time ON messages(session_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_messages_compression ON messages(session_id, compressed_at, id);
+      CREATE INDEX IF NOT EXISTS idx_memories_kind_status ON memories(kind, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_chunks_memory ON memory_chunks(memory_id);
+      CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category, updated_at DESC);
+    `);
   }
 
   close() {
@@ -509,16 +607,33 @@ export class CompanionStore {
 
   getAgents() {
     return this.db.prepare(`
-      SELECT id, name, avatar, category, tagline, persona, is_builtin AS isBuiltin, updated_at AS updatedAt
+      SELECT
+        id, name, avatar, category, tagline, persona, gender,
+        avatar_image_data AS avatarImageData,
+        avatar_image_mime AS avatarImageMime,
+        avatar_image_name AS avatarImageName,
+        is_builtin AS isBuiltin,
+        updated_at AS updatedAt
       FROM agents
       ORDER BY is_builtin DESC, updated_at DESC
-    `).all();
+    `).all().map((row) => ({
+      ...row,
+      avatarImage: row.avatarImageData ? {
+        data: row.avatarImageData,
+        mime: row.avatarImageMime || "image/png",
+        name: row.avatarImageName || "avatar-image"
+      } : null
+    }));
   }
 
   getAgent(id) {
     const row = this.db.prepare(`
       SELECT
-        id, name, avatar, category, tagline, persona, appearance,
+        id, name, avatar, category, tagline, persona, gender,
+        avatar_image_data AS avatarImageData,
+        avatar_image_mime AS avatarImageMime,
+        avatar_image_name AS avatarImageName,
+        appearance,
         voice_style AS voiceStyle,
         relationship,
         opening_message AS openingMessage,
@@ -532,6 +647,11 @@ export class CompanionStore {
         reference_image_data AS referenceImageData,
         reference_image_mime AS referenceImageMime,
         reference_image_name AS referenceImageName,
+        chat_background_data AS chatBackgroundData,
+        chat_background_mime AS chatBackgroundMime,
+        chat_background_name AS chatBackgroundName,
+        chat_background_opacity AS chatBackgroundOpacity,
+        chat_background_blur AS chatBackgroundBlur,
         boundaries_json AS boundariesJson,
         safety_rules_json AS safetyRulesJson,
         prompts_json AS promptsJson,
@@ -552,20 +672,28 @@ export class CompanionStore {
     const id = slug(agent.id || agent.name || `agent_${Date.now()}`);
     this.db.prepare(`
       INSERT INTO agents (
-        id, name, avatar, category, tagline, persona, appearance, voice_style, relationship,
+        id, name, avatar, category, tagline, persona, gender,
+        avatar_image_data, avatar_image_mime, avatar_image_name,
+        appearance, voice_style, relationship,
         opening_message, system_prompt, image_style, visual_context,
         voice_gender, voice_tone, cloned_voice_id, voice_sample_name,
         reference_image_data, reference_image_mime, reference_image_name,
+        chat_background_data, chat_background_mime, chat_background_name,
+        chat_background_opacity, chat_background_blur,
         boundaries_json, safety_rules_json,
         prompts_json, is_builtin, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         avatar = excluded.avatar,
         category = excluded.category,
         tagline = excluded.tagline,
         persona = excluded.persona,
+        gender = excluded.gender,
+        avatar_image_data = excluded.avatar_image_data,
+        avatar_image_mime = excluded.avatar_image_mime,
+        avatar_image_name = excluded.avatar_image_name,
         appearance = excluded.appearance,
         voice_style = excluded.voice_style,
         relationship = excluded.relationship,
@@ -580,6 +708,11 @@ export class CompanionStore {
         reference_image_data = excluded.reference_image_data,
         reference_image_mime = excluded.reference_image_mime,
         reference_image_name = excluded.reference_image_name,
+        chat_background_data = excluded.chat_background_data,
+        chat_background_mime = excluded.chat_background_mime,
+        chat_background_name = excluded.chat_background_name,
+        chat_background_opacity = excluded.chat_background_opacity,
+        chat_background_blur = excluded.chat_background_blur,
         boundaries_json = excluded.boundaries_json,
         safety_rules_json = excluded.safety_rules_json,
         prompts_json = excluded.prompts_json,
@@ -591,6 +724,10 @@ export class CompanionStore {
       String(agent.category || "custom").trim(),
       String(agent.tagline || "").trim(),
       String(agent.persona || "").trim(),
+      normalizeAgentGender(agent.gender, agent.voiceGender),
+      agent.clearAvatarImage ? "" : String(agent.avatarImage?.data || agent.avatarImageData || "").trim(),
+      agent.clearAvatarImage ? "" : String(agent.avatarImage?.mime || agent.avatarImageMime || "").trim(),
+      agent.clearAvatarImage ? "" : String(agent.avatarImage?.name || agent.avatarImageName || "").trim(),
       String(agent.appearance || "").trim(),
       String(agent.voiceStyle || "").trim(),
       String(agent.relationship || "").trim(),
@@ -605,6 +742,11 @@ export class CompanionStore {
       agent.clearReferenceImage ? "" : String(agent.referenceImage?.data || agent.referenceImageData || "").trim(),
       agent.clearReferenceImage ? "" : String(agent.referenceImage?.mime || agent.referenceImageMime || "").trim(),
       agent.clearReferenceImage ? "" : String(agent.referenceImage?.name || agent.referenceImageName || "").trim(),
+      agent.clearChatBackground ? "" : String(agent.chatBackground?.data || agent.chatBackgroundData || "").trim(),
+      agent.clearChatBackground ? "" : String(agent.chatBackground?.mime || agent.chatBackgroundMime || "").trim(),
+      agent.clearChatBackground ? "" : String(agent.chatBackground?.name || agent.chatBackgroundName || "").trim(),
+      normalizeChatBackgroundOpacity(agent.chatBackgroundOpacity),
+      normalizeChatBackgroundBlur(agent.chatBackgroundBlur),
       JSON.stringify(toLines(agent.boundaries)),
       JSON.stringify(toLines(agent.safetyRules)),
       JSON.stringify(Array.isArray(agent.prompts) ? agent.prompts : []),
@@ -631,54 +773,98 @@ export class CompanionStore {
     if (!agent) return false;
     if (agent.isBuiltin) throw new Error("Built-in agents cannot be deleted");
     this.db.prepare("DELETE FROM agents WHERE id = ?").run(id);
-    if (this.getActiveAgentId() === id) this.setMeta("active_agent_id", "mori");
+    if (this.getActiveAgentId() === id) {
+      const next = this.getAgent("mori") || this.getAgents()[0] || null;
+      if (!next) throw new Error("At least one agent is required");
+      this.setMeta("active_agent_id", next.id);
+    }
     return true;
   }
 
-  addMessage({ sessionId = "default", role, content, mood = null, workflow = null, safetyLevel = null, source = null, metadata = {} }) {
+  addMessage({
+    sessionId = "default",
+    role,
+    content,
+    status = "active",
+    parentId = null,
+    variantGroupId = "",
+    variantIndex = 0,
+    replacedBy = null,
+    mood = null,
+    workflow = null,
+    safetyLevel = null,
+    source = null,
+    metadata = {}
+  }) {
     const result = this.db.prepare(`
-      INSERT INTO messages (session_id, role, content, mood, workflow, safety_level, source, metadata_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(sessionId, role, content, mood, workflow, safetyLevel, source, JSON.stringify(metadata || {}));
+      INSERT INTO messages (
+        session_id, role, content, status, parent_id, variant_group_id, variant_index, replaced_by,
+        mood, workflow, safety_level, source, metadata_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sessionId,
+      role,
+      content,
+      normalizeMessageStatus(status),
+      parentId == null ? null : Number(parentId),
+      String(variantGroupId || ""),
+      Number.isFinite(Number(variantIndex)) ? Number(variantIndex) : 0,
+      replacedBy == null ? null : Number(replacedBy),
+      mood,
+      workflow,
+      safetyLevel,
+      source,
+      JSON.stringify(metadata || {})
+    );
     return Number(result.lastInsertRowid);
   }
 
   getMessage(id) {
     const row = this.db.prepare(`
       SELECT
-        id, role, content, mood, workflow, safety_level AS safetyLevel,
-        source, metadata_json AS metadataJson, created_at AS createdAt
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
       FROM messages
       WHERE id = ?
       LIMIT 1
     `).get(Number(id));
-    return row ? { ...row, metadata: safeJson(row.metadataJson, {}) } : null;
+    return row ? messageFromRow(row) : null;
   }
 
   getRecentMessages(sessionId = "default", limit = 16) {
     const rows = this.db.prepare(`
       SELECT
-        id, role, content, mood, workflow, safety_level AS safetyLevel,
-        source, metadata_json AS metadataJson, created_at AS createdAt
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
       FROM messages
-      WHERE session_id = ?
+      WHERE session_id = ? AND status = 'active'
       ORDER BY id DESC
       LIMIT ?
     `).all(sessionId, limit).reverse();
-    return rows.map((row) => ({ ...row, metadata: safeJson(row.metadataJson, {}) }));
+    return rows.map(messageFromRow);
   }
 
   getMessagesBefore({ sessionId = "default", beforeId, limit = 30 }) {
     const rows = this.db.prepare(`
       SELECT
-        id, role, content, mood, workflow, safety_level AS safetyLevel,
-        source, metadata_json AS metadataJson, created_at AS createdAt
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
       FROM messages
-      WHERE session_id = ? AND id < ?
+      WHERE session_id = ? AND id < ? AND status = 'active'
       ORDER BY id DESC
       LIMIT ?
     `).all(sessionId, Number(beforeId), Number(limit)).reverse();
-    return rows.map((row) => ({ ...row, metadata: safeJson(row.metadataJson, {}) }));
+    return rows.map(messageFromRow);
   }
 
   deleteRecentAssistantTextMessage({ sessionId = "default", content, withinLast = 6 }) {
@@ -689,6 +875,7 @@ export class CompanionStore {
       FROM messages
       WHERE session_id = ?
         AND role = 'assistant'
+        AND status = 'active'
         AND (source IS NULL OR source != 'tool:voice.speech')
       ORDER BY id DESC
       LIMIT ?
@@ -708,11 +895,64 @@ export class CompanionStore {
     return Number(result.changes || 0);
   }
 
+  getLastActiveAssistantMessage(sessionId = "default") {
+    const row = this.db.prepare(`
+      SELECT
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM messages
+      WHERE session_id = ?
+        AND role = 'assistant'
+        AND status = 'active'
+        AND (source IS NULL OR source != 'tool:voice.speech')
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(sessionId);
+    return row ? messageFromRow(row) : null;
+  }
+
+  getActiveMessagesBefore({ sessionId = "default", beforeId, limit = 20 }) {
+    const rows = this.db.prepare(`
+      SELECT
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM messages
+      WHERE session_id = ? AND id < ? AND status = 'active'
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(sessionId, Number(beforeId), Number(limit)).reverse();
+    return rows.map(messageFromRow);
+  }
+
+  replaceAssistantMessage({ oldMessageId, newMessage }) {
+    return this.runInTransaction(() => {
+      const oldMessage = this.getMessage(oldMessageId);
+      if (!oldMessage || oldMessage.role !== "assistant" || oldMessage.status !== "active") {
+        throw new Error("No active assistant message to replace");
+      }
+      const newMessageId = this.addMessage(newMessage);
+      this.db.prepare(`
+        UPDATE messages
+        SET status = 'replaced',
+            replaced_by = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'active'
+      `).run(newMessageId, Number(oldMessageId));
+      return this.getMessage(newMessageId);
+    });
+  }
+
   getUncompressedMessageCount(sessionId = "default") {
     const row = this.db.prepare(`
       SELECT count(*) AS count
       FROM messages
-      WHERE session_id = ? AND compressed_at IS NULL
+      WHERE session_id = ? AND compressed_at IS NULL AND status = 'active'
     `).get(sessionId);
     return Number(row?.count || 0);
   }
@@ -721,7 +961,7 @@ export class CompanionStore {
     return this.db.prepare(`
       SELECT id, role, content, mood, workflow, safety_level AS safetyLevel, created_at AS createdAt
       FROM messages
-      WHERE session_id = ? AND compressed_at IS NULL
+      WHERE session_id = ? AND compressed_at IS NULL AND status = 'active'
       ORDER BY id ASC
       LIMIT ?
     `).all(sessionId, limit);
@@ -995,6 +1235,14 @@ export class CompanionStore {
   ensureColumn(table, column, definition) {
     const columns = this.db.prepare(`PRAGMA table_info(${table})`).all();
     if (!columns.some((item) => item.name === column)) {
+      if (/DEFAULT\s+CURRENT_TIMESTAMP/i.test(definition)) {
+        const nullableDefinition = definition
+          .replace(/\s+NOT\s+NULL/ig, "")
+          .replace(/\s+DEFAULT\s+CURRENT_TIMESTAMP/ig, "");
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${nullableDefinition};`);
+        this.db.prepare(`UPDATE ${table} SET ${column} = CURRENT_TIMESTAMP WHERE ${column} IS NULL`).run();
+        return;
+      }
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
     }
   }
@@ -1031,6 +1279,12 @@ function deserializeAgent(row) {
     category: row.category,
     tagline: row.tagline,
     persona: row.persona,
+    gender: normalizeAgentGender(row.gender, row.voiceGender),
+    avatarImage: row.avatarImageData ? {
+      data: row.avatarImageData,
+      mime: row.avatarImageMime || "image/png",
+      name: row.avatarImageName || "avatar-image"
+    } : null,
     appearance: row.appearance || "",
     voiceStyle: row.voiceStyle,
     relationship: row.relationship,
@@ -1047,6 +1301,13 @@ function deserializeAgent(row) {
       mime: row.referenceImageMime || "image/png",
       name: row.referenceImageName || "reference-image"
     } : null,
+    chatBackground: row.chatBackgroundData ? {
+      data: row.chatBackgroundData,
+      mime: row.chatBackgroundMime || "image/png",
+      name: row.chatBackgroundName || "chat-background"
+    } : null,
+    chatBackgroundOpacity: normalizeChatBackgroundOpacity(row.chatBackgroundOpacity),
+    chatBackgroundBlur: normalizeChatBackgroundBlur(row.chatBackgroundBlur),
     boundaries: safeJson(row.boundariesJson, []),
     safetyRules: safeJson(row.safetyRulesJson, []),
     prompts: safeJson(row.promptsJson, []),
@@ -1067,6 +1328,27 @@ function slug(value) {
 
 function normalizeImageStyle(value) {
   return value === "anime" ? "anime" : "realistic";
+}
+
+function normalizeAgentGender(value, voiceGender = "") {
+  const gender = String(value || "").trim();
+  if (["female", "male", "nonbinary", "unspecified"].includes(gender)) return gender;
+  const voice = String(voiceGender || "").trim();
+  if (["boy", "male", "deep_male"].includes(voice)) return "male";
+  if (["girl", "female", "mature_female"].includes(voice)) return "female";
+  return "unspecified";
+}
+
+function normalizeChatBackgroundOpacity(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0.18;
+  return Math.min(0.7, Math.max(0, number));
+}
+
+function normalizeChatBackgroundBlur(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.min(24, Math.max(0, Math.round(number)));
 }
 
 function normalizeVoiceGender(value) {
@@ -1212,4 +1494,20 @@ function builtInAgents() {
       isBuiltin: true
     }
   ];
+}
+
+function normalizeMessageStatus(status) {
+  return ["active", "replaced", "deleted", "failed"].includes(String(status || "")) ? String(status) : "active";
+}
+
+function messageFromRow(row) {
+  return {
+    ...row,
+    status: normalizeMessageStatus(row.status),
+    parentId: row.parentId == null ? null : Number(row.parentId),
+    variantGroupId: row.variantGroupId || "",
+    variantIndex: Number(row.variantIndex || 0),
+    replacedBy: row.replacedBy == null ? null : Number(row.replacedBy),
+    metadata: safeJson(row.metadataJson, {})
+  };
 }

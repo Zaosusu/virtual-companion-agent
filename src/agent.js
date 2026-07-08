@@ -202,6 +202,7 @@ async function buildImagePlan({ character, contextPlan = null, message, history 
 
 function buildImagePrompt({ character, contextPlan = null, message, history = [], imagePlan = null }) {
   const style = character.runtime_config?.imageStyle === "anime" ? "二次元插画" : "真人感照片";
+  const gender = characterGenderLabel(character);
   const context = imagePlan ? planToVisualContext(imagePlan) : buildVisualContext({ character, contextPlan, message, history });
   const emotionalContinuity = buildImageEmotionalContinuity({ message, history });
   const blockedFacts = contextPlan?.blockedFacts?.length
@@ -215,6 +216,7 @@ function buildImagePrompt({ character, contextPlan = null, message, history = []
       "同等硬约束：用户本次指定的目标场景必须生效，参考图只用于锁定人物身份，不用于保留原背景。",
       "必须替换参考图原背景；不要把参考图里的公园、树林、街道、路人、室外环境带入新图。",
       emotionalContinuity ? `情绪硬约束：${emotionalContinuity}` : "",
+      gender ? `角色性别/性别表达：${gender}` : "",
       character.runtime_config?.appearance ? `外貌文字补充：${character.runtime_config.appearance}` : "",
       `目标场景：${context}`,
       blockedFacts,
@@ -226,6 +228,7 @@ function buildImagePrompt({ character, contextPlan = null, message, history = []
   }
   return [
     `生成一张虚拟角色「${character.name}」的图片。`,
+    gender ? `角色性别/性别表达：${gender}` : "",
     `角色人设：${character.persona}`,
     character.runtime_config?.appearance ? `外貌特征：${character.runtime_config.appearance}` : "",
     `整体风格：${style}。`,
@@ -258,6 +261,7 @@ function planToVisualContext(plan) {
 function compactCharacterHint(character) {
   return [
     character.name,
+    characterGenderLabel(character),
     character.persona,
     character.runtime_config?.appearance,
     character.runtime_config?.visualContext
@@ -427,12 +431,14 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
   const userSystemPrompt = String(character.runtime_config?.systemPrompt || "").trim();
   const userPersona = String(character.persona || "").trim();
   const userVoiceStyle = String(character.voice?.style || "").trim();
+  const userGender = characterGenderLabel(character);
   const userBoundaries = (character.boundaries || []).filter(Boolean);
   const userSafetyRules = (character.safety_rules || []).filter(Boolean);
   const identityLines = userSystemPrompt
     ? [
       "以下【用户填写的系统提示词】为最高优先级，默认模板不得覆盖其中的人设、身份、称呼、关系和语气。",
       `【用户填写的系统提示词】\n${userSystemPrompt}`,
+      userGender ? `【角色性别/性别表达】\n${userGender}` : "",
       userPersona ? `【用户填写的人设】\n${userPersona}` : "",
       userVoiceStyle ? `【用户填写的说话风格】\n${userVoiceStyle}` : "",
       userBoundaries.length ? `【用户填写的边界】\n${userBoundaries.join("；")}` : "",
@@ -440,6 +446,7 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
     ]
     : [
       `你正在以「${character.name}」的第一人称与用户对话。`,
+      userGender ? `角色性别/性别表达：${userGender}` : "",
       userPersona ? `角色定位：${userPersona}` : "角色定位：稳定、自然、有边界地陪用户聊天。",
       `说话风格：${userVoiceStyle || "温柔、清醒、具体"}`,
       userBoundaries.length ? `边界：${userBoundaries.join("；")}` : "",
@@ -465,6 +472,17 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
     ...formatHistoryForRemote(history, retrievalPlan),
     { role: "user", content: message }
   ];
+}
+
+function characterGenderLabel(character = {}) {
+  const gender = character.gender || character.runtime_config?.gender || "";
+  const labels = {
+    female: "女性",
+    male: "男性",
+    nonbinary: "非二元/中性",
+    unspecified: "未指定"
+  };
+  return labels[gender] || "";
 }
 
 function formatHistoryForRemote(history = [], retrievalPlan = null) {
