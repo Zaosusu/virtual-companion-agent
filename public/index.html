@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>角色智能体工作台</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/public/styles.css" />
   </head>
   <body>
@@ -38,7 +39,7 @@
             <p id="status">正在载入角色...</p>
           </div>
           <div class="mode-pill" id="modePill">agent</div>
-          <button class="ghost compact-action" id="openAuthButton" type="button">注册/登录</button>
+          <button class="ghost compact-action realtime-action" id="realtimeVoiceButton" type="button">打电话</button>
           <button class="ghost compact-action" id="clearChatButton" type="button">清空聊天</button>
         </header>
 
@@ -175,7 +176,7 @@
               <div class="form-grid">
                 <label>
                   <span>&#32972;&#26223;&#28129;&#20837;</span>
-                  <input id="chatBackgroundOpacity" type="range" min="0" max="0.7" step="0.05" />
+                  <input id="chatBackgroundOpacity" type="range" min="0" max="1" step="0.05" />
                 </label>
                 <label>
                   <span>&#32972;&#26223;&#27169;&#31946;</span>
@@ -380,6 +381,6 @@
       </article>
     </template>
 
-    <script type="module" src="/public/app.js"></script>
+    <script type="module" src="/public/app.js?v=20260708-realtime-btoa-fix"></script>
   </body>
 </html>

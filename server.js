@@ -2,11 +2,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { WebSocket } from "ws";
 import { loadLocalEnv } from "./src/env.js";
 import { extractMemoryCandidates, buildTurnSummary, compressConversation } from "./src/agent.js";
 import { CompanionStore } from "./src/db.js";
 import { buildVoiceAgentDecision, orchestrateCompanionTurn } from "./src/orchestrator/index.js";
 import { runCragRetrieval } from "./src/orchestrator/memoryAgent.js";
+import { attachStepFunRealtimeBridge } from "./src/realtime/stepfunRealtimeBridge.js";
 import { generateImage } from "./src/tools/imageGeneration.js";
 import { cloneVoice, synthesizeSpeech, previewVoice } from "./src/tools/speechSynthesis.js";
 import {
@@ -90,9 +92,34 @@ async function handleApi(req, res, pathname) {
       capabilities: {
         chat: Boolean(modelConfig.enabled || modelConfig.officialEnabled || (PUBLIC_FREE_ACCESS_ENABLED && modelConfig.officialBaseUrl)),
         image: Boolean(modelConfig.imageOutputAvailable),
-        voice: Boolean(modelConfig.audioEnabled)
+        voice: Boolean(modelConfig.audioEnabled),
+        realtimeVoice: Boolean(modelConfig.realtimeEnabled)
       }
     });
+  }
+
+  if (req.method === "GET" && pathname === "/api/realtime/diagnostics") {
+    const { modelConfig } = getRuntimeConfig();
+    const startedAt = Date.now();
+    const result = {
+      enabled: Boolean(modelConfig.realtimeEnabled),
+      mode: modelConfig.mode,
+      target: safeRealtimeTarget(modelConfig.realtimeUrl),
+      model: modelConfig.realtimeModel || "",
+      hasToken: Boolean(modelConfig.realtimeApiKey),
+      websocket: "未检测",
+      ready: "未检测",
+      elapsedMs: 0
+    };
+    try {
+      const probe = await probeRealtimeBackend(modelConfig);
+      Object.assign(result, probe);
+    } catch (error) {
+      result.websocket = "失败";
+      result.ready = error.message || "实时后端检测失败";
+    }
+    result.elapsedMs = Date.now() - startedAt;
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "GET" && pathname === "/api/bootstrap") {
@@ -1742,6 +1769,116 @@ function detectGatewayErrorCode(status, text = "") {
   return "gateway_error";
 }
 
+function probeRealtimeBackend(modelConfig = {}) {
+  return new Promise((resolve, reject) => {
+    if (!modelConfig.realtimeEnabled) return reject(new Error("实时语音未启用"));
+    if (!modelConfig.realtimeUrl || !modelConfig.realtimeModel || !modelConfig.realtimeApiKey) {
+      return reject(new Error("实时语音配置不完整"));
+    }
+    const url = new URL(modelConfig.realtimeUrl);
+    url.searchParams.set("model", modelConfig.realtimeModel);
+    const startedAt = Date.now();
+    const eventTypes = [];
+    let responseRequested = false;
+    let audioDeltas = 0;
+    let textDeltas = 0;
+    const socket = new WebSocket(url, {
+      headers: { authorization: `Bearer ${modelConfig.realtimeApiKey}` }
+    });
+    const done = (payload) => {
+      clearTimeout(timer);
+      closeRealtimeProbe(socket);
+      resolve({ ...payload, elapsedMs: Date.now() - startedAt });
+    };
+    const timer = setTimeout(() => done({
+      websocket: socket.readyState === WebSocket.OPEN ? "通过" : "超时",
+      ready: eventTypes.length ? "已连接但未完成音频检测" : "未收到 ready",
+      audioOutput: audioDeltas > 0 ? `通过：${audioDeltas} 个音频片段` : "未收到音频",
+      textOutput: textDeltas > 0 ? `收到：${textDeltas} 个文字片段` : "未收到文字",
+      events: eventTypes.slice(-12)
+    }), 12000);
+    socket.on("open", () => {
+      socket.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          modalities: ["text", "audio"],
+          instructions: "这是实时语音连通性检测。收到 response.create 后，只用中文说一句：通话检测成功。",
+          voice: modelConfig.audioVoice || "yuanqishaonv",
+          input_audio_format: "pcm16",
+          output_audio_format: "pcm16"
+        }
+      }));
+    });
+    socket.on("message", (raw) => {
+      const event = parseRealtimeJson(raw);
+      if (event?.type) {
+        eventTypes.push(event.type);
+        if (eventTypes.length > 30) eventTypes.shift();
+      }
+      if (event?.type === "ready") {
+        maybeRequestRealtimeProbeResponse();
+      } else if (event?.type === "session.updated" || event?.type === "session.created") {
+        maybeRequestRealtimeProbeResponse();
+      } else if (event?.type === "response.audio.delta" && event.delta) {
+        audioDeltas += 1;
+        done({
+          websocket: "通过",
+          ready: "通过",
+          audioOutput: `通过：${audioDeltas} 个音频片段`,
+          textOutput: textDeltas > 0 ? `收到：${textDeltas} 个文字片段` : "未收到文字",
+          events: eventTypes.slice(-12)
+        });
+      } else if (/response\.(text|audio_transcript)\.delta/.test(event?.type || "")) {
+        textDeltas += 1;
+      } else if (event?.type === "error") {
+        done({
+          websocket: "通过",
+          ready: "失败",
+          audioOutput: `失败：${event.message || event.error?.message || "实时服务错误"}`,
+          textOutput: "失败",
+          events: eventTypes.slice(-12)
+        });
+      }
+    });
+    socket.on("error", (error) => reject(error));
+
+    function maybeRequestRealtimeProbeResponse() {
+      if (responseRequested || socket.readyState !== WebSocket.OPEN) return;
+      responseRequested = true;
+      socket.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          modalities: ["text", "audio"],
+          instructions: "请用中文说：通话检测成功。"
+        }
+      }));
+    }
+  });
+}
+
+function parseRealtimeJson(raw) {
+  try {
+    return JSON.parse(Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw || ""));
+  } catch {
+    return null;
+  }
+}
+
+function closeRealtimeProbe(socket) {
+  try {
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+  } catch {}
+}
+
+function safeRealtimeTarget(url = "") {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return "";
+  }
+}
+
 function audioConfigFromModel(modelConfig, agent = {}, voiceDecision = null) {
   const preferredVoice = agent.clonedVoiceId || voicePresetForAgent(agent) || modelConfig.audioVoice;
   return {
@@ -1880,6 +2017,21 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     console.error(error);
     sendJson(res, 500, { error: error.message || "server error" });
+  }
+});
+
+attachStepFunRealtimeBridge({
+  server,
+  getRuntimeConfig,
+  store,
+  resolveAuth(modelConfig) {
+    if (!modelConfig.realtimeEnabled) {
+      return {
+        allowed: false,
+        message: "实时语音未启用。请配置 COMPANION_SELF_HOSTED=1 和 STEPFUN_REALTIME_API_KEY。"
+      };
+    }
+    return { allowed: true };
   }
 });
 

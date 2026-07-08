@@ -59,5 +59,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "虚拟角色智能体"
     }
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
   }
 }

@@ -1,3 +1,5 @@
+import { createRealtimeVoiceController } from "./realtimeVoice.js";
+
 const $ = (selector) => document.querySelector(selector);
 
 const agentList = $("#agentList");
@@ -17,7 +19,7 @@ const input = $("#messageInput");
 const template = $("#messageTemplate");
 const statusEl = $("#status");
 const modePill = $("#modePill");
-const openAuthButton = $("#openAuthButton");
+const realtimeVoiceButton = $("#realtimeVoiceButton");
 const clearChatButton = $("#clearChatButton");
 const agentTitleEl = $("#agentTitle");
 const agentAvatarEl = $("#agentAvatar");
@@ -122,6 +124,14 @@ let state = {
   hasMoreMessages: true,
   loadingOlderMessages: false
 };
+
+const realtimeVoice = createRealtimeVoiceController({
+  onStatus: handleRealtimeVoiceStatus,
+  onTranscript: handleRealtimeUserTranscript,
+  onAssistantText: handleRealtimeAssistantText,
+  onResponseDone: handleRealtimeResponseDone,
+  onError: handleRealtimeVoiceError
+});
 
 let voicePlayback = {
   audio: null,
@@ -245,10 +255,12 @@ cloneAgentButton.addEventListener("click", async () => {
   addMessage("system", "已复制当前角色，副本可以自由修改。");
 });
 
-openAuthButton?.addEventListener("click", () => {
-  setPanelCollapsed("right", false);
-  authAccount?.scrollIntoView({ behavior: "smooth", block: "center" });
-  authAccount?.focus();
+realtimeVoiceButton?.addEventListener("click", async () => {
+  if (realtimeVoice.active) {
+    await realtimeVoice.stop();
+    return;
+  }
+  await realtimeVoice.start();
 });
 
 modelConfigForm.addEventListener("submit", async (event) => {
@@ -1158,6 +1170,69 @@ function renderModelConfig() {
   modelConfigHint.textContent = modelHintText(config);
   renderAuthStatus();
   renderLicenseBindingState(config);
+  renderRealtimeVoiceButton("idle");
+}
+
+function renderRealtimeVoiceButton(status = "idle") {
+  if (!realtimeVoiceButton) return;
+  const available = Boolean(state.modelConfig?.capabilities?.realtimeVoice);
+  const active = status !== "idle" && status !== "closed";
+  realtimeVoiceButton.disabled = !available && !active;
+  realtimeVoiceButton.classList.toggle("active", active);
+  realtimeVoiceButton.dataset.status = status;
+  const labels = {
+    idle: available ? "打电话" : "暂不可通话",
+    connecting: "拨号中...",
+    listening: "通话中",
+    speaking: "对方说话中",
+    closing: "挂断中..."
+  };
+  realtimeVoiceButton.textContent = labels[status] || labels.idle;
+}
+
+function handleRealtimeVoiceStatus(status) {
+  renderRealtimeVoiceButton(status);
+  if (status === "listening") statusEl.textContent = "通话已接通，直接说话就可以。";
+  if (status === "speaking") statusEl.textContent = "对方正在说话。";
+  if (status === "idle") renderStatus();
+}
+
+function handleRealtimeUserTranscript(text) {
+  if (!String(text || "").trim()) return;
+  addMessage("user", text, {
+    meta: "你 · 实时语音",
+    metadata: { type: "realtime_transcript" }
+  });
+}
+
+function handleRealtimeAssistantText(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return;
+  const last = messagesEl.lastElementChild;
+  if (last?.dataset?.realtimeAssistant === "true") {
+    last.querySelector(".message-body").textContent = clean;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return;
+  }
+  const node = addMessage("assistant", clean, {
+    meta: `${state.activeAgent?.name || "角色"} · 实时语音`,
+    metadata: { type: "realtime_voice_live" }
+  });
+  node.dataset.realtimeAssistant = "true";
+}
+
+function handleRealtimeResponseDone(data = {}) {
+  const last = messagesEl.lastElementChild;
+  if (last?.dataset?.realtimeAssistant === "true") {
+    delete last.dataset.realtimeAssistant;
+    if (data.messageId) last.dataset.messageId = String(data.messageId);
+  }
+}
+
+function handleRealtimeVoiceError(message) {
+  renderRealtimeVoiceButton("idle");
+  addMessage("system", `实时语音失败：${message}`);
+  renderStatus();
 }
 
 function setAuthMode(mode) {
@@ -1958,7 +2033,7 @@ function applyChatBackground(agent = state.activeAgent) {
     panel?.style.removeProperty("--chat-bg-image");
     return;
   }
-  const opacity = Math.min(0.7, Math.max(0, Number(agent.chatBackgroundOpacity ?? 0.18)));
+  const opacity = Math.min(1, Math.max(0, Number(agent.chatBackgroundOpacity ?? 0.18)));
   const blur = Math.min(24, Math.max(0, Number(agent.chatBackgroundBlur ?? 0)));
   panel.classList.add("has-chat-background");
   panel.style.setProperty("--chat-bg-image", `url("${toDataUrl(background)}")`);

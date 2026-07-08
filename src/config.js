@@ -1,5 +1,11 @@
 import { RELEASE_OFFICIAL_BASE_URL } from "./releaseEnv.js";
 
+function officialRealtimeUrl(baseUrl = "") {
+  const clean = String(baseUrl || "").trim().replace(/\/$/, "");
+  if (!clean) return "";
+  return `${clean.replace(/^https:/i, "wss:").replace(/^http:/i, "ws:")}/ws/realtime`;
+}
+
 export function getEffectiveModelConfig(store, env = process.env) {
   const saved = store.getModelConfig();
   const envApiKey = env.STEP_API_KEY || env.STEPFUN_API_KEY || env.COMPANION_API_KEY || "";
@@ -44,6 +50,16 @@ export function getEffectiveModelConfig(store, env = process.env) {
     ? Boolean(officialBaseUrl && audioModel)
     : Boolean(audioBaseUrl && audioModel && audioApiKey);
   const audioEnabled = Boolean(audioConfigured && audioVoice);
+  const realtimeUrl = officialEnabled
+    ? officialRealtimeUrl(officialBaseUrl)
+    : env.STEPFUN_REALTIME_URL || env.COMPANION_REALTIME_URL || "wss://api.stepfun.com/step_plan/v1/realtime";
+  const realtimeModel = env.STEPFUN_REALTIME_MODEL || env.COMPANION_REALTIME_MODEL || "stepaudio-2.5-realtime";
+  const realtimeApiKey = officialEnabled
+    ? officialUserToken
+    : selfHostedEnabled
+    ? (env.STEPFUN_REALTIME_API_KEY || env.STEP_API_KEY || env.STEPFUN_API_KEY || saved.audioApiKey || apiKey)
+    : "";
+  const realtimeEnabled = Boolean((officialEnabled || selfHostedEnabled) && realtimeUrl && realtimeModel && realtimeApiKey);
 
   return {
     enabled,
@@ -81,6 +97,10 @@ export function getEffectiveModelConfig(store, env = process.env) {
     audioReturnUrl,
     audioTimestamp,
     audioExtraBody,
+    realtimeEnabled,
+    realtimeUrl,
+    realtimeModel,
+    realtimeApiKey: realtimeEnabled ? realtimeApiKey : "",
     mode: officialEnabled ? "cloud_license" : enabled ? "self_hosted" : "free_quota",
     source: officialEnabled ? "official" : enabled ? (saved.enabled ? "database" : "environment-self-hosted") : "local"
   };
@@ -91,7 +111,8 @@ export function toPublicModelConfig(config) {
     enabled: Boolean(config.enabled),
     capabilities: {
       image: Boolean(config.imageOutputAvailable),
-      voice: Boolean(config.audioEnabled)
+      voice: Boolean(config.audioEnabled),
+      realtimeVoice: Boolean(config.realtimeEnabled)
     },
     license: {
       enabled: Boolean(config.officialLicenseKey),
@@ -225,7 +246,7 @@ function normalizeAgentGender(value, voiceGender = "") {
 function normalizeChatBackgroundOpacity(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0.18;
-  return Math.min(0.7, Math.max(0, number));
+  return Math.min(1, Math.max(0, number));
 }
 
 function normalizeChatBackgroundBlur(value) {

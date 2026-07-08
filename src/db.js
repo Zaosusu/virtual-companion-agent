@@ -1342,7 +1342,7 @@ function normalizeAgentGender(value, voiceGender = "") {
 function normalizeChatBackgroundOpacity(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0.18;
-  return Math.min(0.7, Math.max(0, number));
+  return Math.min(1, Math.max(0, number));
 }
 
 function normalizeChatBackgroundBlur(value) {
