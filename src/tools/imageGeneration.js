@@ -1,3 +1,5 @@
+import { resolveImageGenerationPolicy } from "../modelPolicy.js";
+
 export async function generateImage({ prompt, imageConfig, referenceImage }) {
   if (!imageConfig?.apiKey || !imageConfig?.model || !imageConfig?.baseUrl) {
     throw new Error("图片模型配置不完整。");
@@ -13,7 +15,7 @@ export async function generateImage({ prompt, imageConfig, referenceImage }) {
   }
 
   return generateImageFromText({
-    prompt: limitPrompt(prompt, isStepFunModel(model) ? 512 : 4000),
+    prompt: limitPrompt(prompt, resolveImageGenerationPolicy({ model, imageConfig, referenceImage }).promptLimit),
     imageConfig,
     referenceImage
   });
@@ -49,13 +51,14 @@ async function editImageWithReference({ prompt, imageConfig, referenceImage }) {
   const endpoint = `${normalizeImageBaseUrl(imageConfig.baseUrl).replace(/\/$/, "")}/images/edits`;
   const form = new FormData();
   const model = String(imageConfig.model || "").trim();
+  const policy = resolveImageGenerationPolicy({ model, imageConfig, referenceImage });
   form.append("model", model);
   form.append("prompt", prompt);
   form.append("response_format", "b64_json");
-  form.append("steps", String(defaultSteps(model)));
-  form.append("cfg_scale", String(defaultCfgScale(model)));
-  form.append("text_mode", "false");
-  if (imageConfig.size) form.append("size", imageConfig.size);
+  if (policy.steps !== undefined) form.append("steps", String(policy.steps));
+  if (policy.cfgScale !== undefined) form.append("cfg_scale", String(policy.cfgScale));
+  form.append("text_mode", String(policy.textMode));
+  if (policy.size) form.append("size", policy.size);
   if (imageConfig.seed !== undefined && imageConfig.seed !== "") form.append("seed", String(imageConfig.seed));
   form.append("image", dataUrlToBlob(referenceImage), safeImageFileName(referenceImage));
 
@@ -82,23 +85,24 @@ async function editImageWithReference({ prompt, imageConfig, referenceImage }) {
 
 function buildGenerationRequestBody({ prompt, imageConfig, referenceImage }) {
   const model = String(imageConfig.model || "").trim();
+  const policy = resolveImageGenerationPolicy({ model, imageConfig, referenceImage });
   const body = {
     model,
     prompt,
-    size: imageConfig.size || "1024x1024",
+    size: policy.size,
     response_format: isStepFunModel(model) ? "b64_json" : "url"
   };
 
   if (isStepFunModel(model)) {
-    body.steps = defaultSteps(model);
-    body.cfg_scale = defaultCfgScale(model);
-    body.text_mode = true;
+    body.steps = policy.steps;
+    body.cfg_scale = policy.cfgScale;
+    body.text_mode = policy.textMode;
   }
 
   if (referenceImage?.data && model === "step-1x-medium") {
     body.style_reference = {
       source_url: toDataUrl(referenceImage),
-      weight: Number(imageConfig.styleReferenceWeight || 1.35)
+      weight: policy.styleReferenceWeight
     };
   }
 
@@ -160,17 +164,6 @@ function isStepFunModel(model) {
 
 function normalizeImageBaseUrl(baseUrl) {
   return String(baseUrl || "").trim();
-}
-
-function defaultSteps(model) {
-  if (model === "step-image-edit-2") return 8;
-  return 50;
-}
-
-function defaultCfgScale(model) {
-  if (model === "step-image-edit-2") return 1;
-  if (model === "step-2x-large") return 6;
-  return 7.5;
 }
 
 function limitPrompt(prompt, maxLength) {

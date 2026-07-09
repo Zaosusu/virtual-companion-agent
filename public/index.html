@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>角色智能体工作台</title>
+    <title>2link：虚拟角色智能体</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/public/styles.css?v=20260709-voice-slider-layout" />
   </head>
@@ -17,7 +17,7 @@
         <header class="brand">
           <div class="brand-mark">AI</div>
           <div>
-            <h1>角色智能体</h1>
+            <h1>2link：虚拟角色智能体</h1>
             <p>角色、记忆和多模态陪伴</p>
           </div>
           <button class="panel-toggle" id="hideLeftPanel" type="button" aria-label="隐藏角色列表" title="隐藏角色列表">‹</button>
@@ -131,6 +131,29 @@
                 <option value="anime">二次元风格</option>
               </select>
             </label>
+            <div class="response-controls">
+              <label>
+                <span>回复方式</span>
+                <select id="responseStyle">
+                  <option value="balanced">自动平衡</option>
+                  <option value="vivid">更生动</option>
+                  <option value="dream">梦向画面</option>
+                  <option value="lover">撒娇恋人</option>
+                  <option value="reserved">克制冷感</option>
+                  <option value="story">剧情发散</option>
+                </select>
+              </label>
+              <label class="range-control">
+                <span>创造性</span>
+                <input id="creativityLevel" type="range" min="0" max="1" step="0.05" />
+                <output id="creativityLevelValue" class="range-value">60%</output>
+              </label>
+              <label class="range-control">
+                <span>回复长短</span>
+                <input id="replyLength" type="range" min="0" max="1" step="0.05" />
+                <output id="replyLengthValue" class="range-value">偏短</output>
+              </label>
+            </div>
             <div class="form-grid">
               <label>
                 <span>声音类型</span>

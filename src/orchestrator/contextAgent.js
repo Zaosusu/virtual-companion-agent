@@ -1,3 +1,5 @@
+import { buildAgentModelRequest } from "../modelPolicy.js";
+
 export async function runContextAgent({
   agent = {},
   character = {},
@@ -97,12 +99,7 @@ async function callContextModel({ agent, character, memory, retrievedMemories, r
       ...(traceId ? { "x-request-id": `${traceId}_context` } : {})
     },
     signal: modelTimeoutSignal(),
-    body: JSON.stringify({
-      model: llm.model,
-      messages,
-      temperature: 0.1,
-      max_tokens: 900
-    })
+    body: JSON.stringify(buildAgentModelRequest({ model: llm.model, messages, task: "context_classification" }))
   });
   if (!response.ok) throw new Error(`context agent failed ${response.status}: ${(await response.text()).slice(0, 200)}`);
   const data = await response.json();

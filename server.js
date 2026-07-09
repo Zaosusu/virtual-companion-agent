@@ -9,6 +9,7 @@ import { CompanionStore } from "./src/db.js";
 import { buildVoiceAgentDecision, orchestrateCompanionTurn } from "./src/orchestrator/index.js";
 import { runCragRetrieval } from "./src/orchestrator/memoryAgent.js";
 import { attachStepFunRealtimeBridge } from "./src/realtime/stepfunRealtimeBridge.js";
+import { buildAgentModelRequest, resolveImageGenerationPolicy } from "./src/modelPolicy.js";
 import { generateImage } from "./src/tools/imageGeneration.js";
 import { cloneVoice, synthesizeSpeech, previewVoice } from "./src/tools/speechSynthesis.js";
 import {
@@ -537,7 +538,11 @@ async function handleApi(req, res, pathname) {
           }
         },
         modelConfig,
-        traceId
+        traceId,
+        turnContext: {
+          regenerate: false,
+          variantIndex: 0
+        }
       });
     } catch (error) {
       traceLog(traceId, "chat.error", {
@@ -664,7 +669,11 @@ async function handleApi(req, res, pathname) {
             }
           },
           modelConfig,
-          traceId
+          traceId,
+          turnContext: {
+            regenerate: true,
+            variantIndex: Number(oldAssistant.variantIndex || 0) + 1
+          }
         });
       } catch (error) {
         traceLog(traceId, "chat.regenerate.error", {
@@ -801,7 +810,11 @@ async function handleApi(req, res, pathname) {
         apiKey: SELF_HOSTED_ENABLED ? (body.apiKey || modelConfig.imageApiKey || modelConfig.apiKey) : "",
         model: SELF_HOSTED_ENABLED ? (body.model || modelConfig.imageModel || modelConfig.model) : modelConfig.imageModel,
         size: body.size,
-        styleReferenceWeight: body.styleReferenceWeight
+        styleReferenceWeight: body.styleReferenceWeight,
+        steps: body.steps,
+        cfgScale: body.cfgScale ?? body.cfg_scale,
+        seed: body.seed,
+        textMode: body.textMode ?? body.text_mode
       };
       const image = usesOfficialGateway(modelConfig)
         ? await callOfficialImageGatewayWithFallback({
@@ -816,7 +829,7 @@ async function handleApi(req, res, pathname) {
           imageConfig: localImageConfig,
           referenceImage
         });
-      const content = String(body.content || "给你发来一张图片。").trim();
+      const content = String(body.content ?? "给你发来一张图片。").trim();
       const messageId = store.addMessage({
         sessionId: agent.id,
         role: "assistant",
@@ -1411,6 +1424,17 @@ async function callOfficialImageGatewayWithFallback({ modelConfig, body = {}, pr
 
 async function callOfficialImageGateway({ modelConfig, body = {}, prompt, referenceImage }) {
   const endpoint = `${modelConfig.officialBaseUrl.replace(/\/$/, "")}/api/image`;
+  const model = body.model || modelConfig.imageModel || "step-image-edit-2";
+  const policy = resolveImageGenerationPolicy({
+    model,
+    imageConfig: {
+      size: body.size,
+      steps: body.steps,
+      cfgScale: body.cfgScale ?? body.cfg_scale,
+      textMode: body.textMode ?? body.text_mode
+    },
+    referenceImage
+  });
   let response;
   try {
     response = await fetch(endpoint, {
@@ -1420,14 +1444,14 @@ async function callOfficialImageGateway({ modelConfig, body = {}, prompt, refere
         authorization: `Bearer ${officialGatewayAuth(modelConfig)}`
       },
       body: JSON.stringify({
-        model: body.model || modelConfig.imageModel || "step-image-edit-2",
+        model,
         prompt,
-        size: body.size || "1024x1024",
+        size: policy.size,
         response_format: body.response_format || "b64_json",
-        cfg_scale: body.cfg_scale ?? 1,
-        steps: body.steps ?? 8,
+        cfg_scale: policy.cfgScale,
+        steps: policy.steps,
         seed: body.seed,
-        text_mode: body.text_mode ?? (referenceImage?.data ? false : true),
+        text_mode: policy.textMode,
         referenceImage: referenceImage?.data ? {
           data: referenceImage.data,
           mime: referenceImage.mime || "image/png",
@@ -1598,13 +1622,7 @@ async function analyzeAppearanceFromImage({ image, currentAppearance = "", llm }
       "content-type": "application/json",
       authorization: `Bearer ${llm.apiKey}`
     },
-    body: JSON.stringify({
-      model: llm.model,
-      messages,
-      temperature: 0.2,
-      max_tokens: 1200,
-      reasoning_effort: "low"
-    })
+    body: JSON.stringify(buildAgentModelRequest({ model: llm.model, messages, task: "vision_appearance" }))
   });
   if (!response.ok) {
     const text = await response.text();
@@ -2127,7 +2145,7 @@ process.on("SIGTERM", shutdown);
 
 server.listen(PORT, HOST, () => {
   const url = getServerUrl();
-  console.log(`Virtual companion agent running at ${url}`);
+  console.log(`2link：虚拟角色智能体 running at ${url}`);
   console.log(`Environment file: ${envInfo.loaded ? envInfo.path : "not found"}`);
   console.log(`SQLite database: ${DB_PATH}`);
   console.log(`Compression window: ${COMPRESSION_MESSAGE_WINDOW} messages`);

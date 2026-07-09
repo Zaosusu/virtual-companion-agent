@@ -1,3 +1,5 @@
+import { buildAgentModelRequest } from "../modelPolicy.js";
+
 export async function reviewAgentOutput({
   channel,
   text = "",
@@ -35,6 +37,8 @@ async function callReviewModel({ channel, text, userText, history, agent, charac
         `当前通道：${channel}。`,
         "你需要判断草稿是否符合用户本轮请求、角色人设、聊天语境和通道能力。",
         "如果通道是 voice，内容必须能直接作为语音气泡播放；不得出现“我不能发语音、只能打字、打电话、约语音通话”等与已经发语音冲突的话。",
+        "如果通道是 voice，括号里的动作、神态、内心和场景描写不是台词，不能进入最终语音文本；只保留角色真正说出口的话。例：（他轻轻笑了一下）我在，别怕。=> 我在，别怕。",
+        "如果通道是 voice 且草稿只有括号动作没有台词，需要根据上下文补一句自然台词，不要返回空文本。",
         "如果草稿不合格，必须保留有效上下文并改写；不要写审阅解释，不要说你在改稿。",
         "输出严格 JSON：{\"action\":\"keep|rewrite\",\"text\":\"最终输出内容\",\"reason\":\"简短原因\"}。"
       ].join("\n")
@@ -58,12 +62,7 @@ async function callReviewModel({ channel, text, userText, history, agent, charac
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${llm.apiKey}` },
-    body: JSON.stringify({
-      model: llm.model,
-      messages,
-      temperature: 0.2,
-      max_tokens: 360
-    })
+    body: JSON.stringify(buildAgentModelRequest({ model: llm.model, messages, task: "review_gate" }))
   });
   if (!response.ok) throw new Error(`review agent failed ${response.status}`);
   const data = await response.json();
@@ -89,12 +88,24 @@ function localReview({ channel, text, userText, agent }) {
       reviewer: "local"
     };
   }
-  if (!hasVoiceCapabilityConflict(text)) {
+  const spokenText = spokenTextForVoice(text);
+  const hasNarration = comparableText(spokenText) !== comparableText(text);
+  const hasConflict = hasVoiceCapabilityConflict(text);
+  if (!hasConflict && !hasNarration && spokenText) {
     return {
       agent: "review_agent",
       action: "keep",
-      text,
+      text: spokenText,
       reason: "适合语音输出",
+      reviewer: "local"
+    };
+  }
+  if (!hasConflict && spokenText) {
+    return {
+      agent: "review_agent",
+      action: "rewrite",
+      text: spokenText,
+      reason: "语音通道已移除括号动作，只保留可朗读台词。",
       reviewer: "local"
     };
   }
@@ -125,7 +136,7 @@ function hasVoiceCapabilityConflict(text) {
 }
 
 function repairVoiceText(text, userText, agent = {}) {
-  const cleaned = String(text || "")
+  const cleaned = spokenTextForVoice(text)
     .split(/(?<=[。！？!?])\s*|\n+/)
     .map((line) => line.trim().replace(/^要不这样，?/, ""))
     .filter(Boolean)
@@ -143,6 +154,33 @@ function repairVoiceText(text, userText, agent = {}) {
   return request
     ? `${name}用语音跟你说：${request}`
     : `${name}用语音跟你说。我在，你想听技术细节、项目故事，还是最近的想法？`;
+}
+
+export function spokenTextForVoice(text) {
+  const source = String(text || "").trim();
+  if (!source) return "";
+  let result = source;
+  for (let index = 0; index < 4; index += 1) {
+    const next = result
+      .replace(/（[^（）]{0,240}）/g, "")
+      .replace(/\([^()]{0,240}\)/g, "")
+      .replace(/【[^【】]{0,240}】/g, "")
+      .replace(/\[[^\[\]]{0,240}\]/g, "")
+      .replace(/^[\s>*_~-]*[*_][^*_]{0,240}[*_][\s>*_~-]*$/gm, "");
+    if (next === result) break;
+    result = next;
+  }
+  return result
+    .replace(/[“”"‘’「」]/g, "")
+    .replace(/^[\s:：,，。.!！?？;；、"“”'‘’]+|[\s:：,，;；、"“”'‘’]+$/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function comparableText(value) {
+  return String(value || "").trim().replace(/\s+/g, "");
 }
 
 function extractReviewText(data) {

@@ -166,6 +166,9 @@ export function characterFromAgent(agent) {
       voiceExpressiveness: normalizeRatio(agent.voiceExpressiveness, 0.6),
       voiceWarmth: normalizeRatio(agent.voiceWarmth, 0.7),
       voiceClarity: normalizeRatio(agent.voiceClarity, 0.65),
+      responseStyle: normalizeResponseStyle(agent.responseStyle),
+      creativityLevel: normalizeRatio(agent.creativityLevel, 0.6),
+      replyLength: normalizeRatio(agent.replyLength, 0.35),
       clonedVoiceId: agent.clonedVoiceId || "",
       voiceSampleName: agent.voiceSampleName || "",
       referenceImage: agent.referenceImage || null,
@@ -216,6 +219,9 @@ export function agentFromImport(value) {
     voiceExpressiveness: normalizeRatio(agent.voiceExpressiveness, 0.6),
     voiceWarmth: normalizeRatio(agent.voiceWarmth, 0.7),
     voiceClarity: normalizeRatio(agent.voiceClarity, 0.65),
+    responseStyle: normalizeResponseStyle(agent.responseStyle),
+    creativityLevel: normalizeRatio(agent.creativityLevel, 0.6),
+    replyLength: normalizeRatio(agent.replyLength, 0.35),
     clonedVoiceId: agent.clonedVoiceId || "",
     voiceSampleName: agent.voiceSampleName || "",
     referenceImage: agent.referenceImage || null,
@@ -266,6 +272,18 @@ function normalizeRatio(value, fallback = 0.5) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Number(Math.min(1, Math.max(0, number)).toFixed(2));
+}
+
+function normalizeResponseStyle(value) {
+  const style = String(value || "").trim();
+  return [
+    "balanced",
+    "vivid",
+    "dream",
+    "lover",
+    "reserved",
+    "story"
+  ].includes(style) ? style : "balanced";
 }
 
 function normalizeAgentGender(value, voiceGender = "") {

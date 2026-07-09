@@ -171,11 +171,14 @@ createCompanionReply()
 
 TextAgent 是真正写主回复的人。它拿到角色设定、上下文计划、CRAG 证据、安全等级和历史对话后，决定本轮是陪伴、计划、复盘、创作、安全回复，还是图片请求。
 
+它不会把模型采样参数、回复长度和回复句式写死。前端只提供用户能理解的 `responseStyle`、`creativityLevel` 和 `replyLength`，TextAgent 再根据本轮 workflow、情绪、CRAG 严格证据、安全等级和最近回复，生成 `responseProfile`，动态决定这轮应该收敛还是发散、该说多长，以及采用“对白先行”“动作-对白-动作”“对白-动作-对白”或纯对白等叙事节奏。
+
 它会遵守：
 
 - CRAG 证据不足时，不编造具体事实。
 - 高风险话题只做边界提醒和信息整理。
 - 危机场景优先安全回复。
+- 沉浸式回复不固定为括号动作开头；连续出现相同结构时，会主动换节奏。
 - 图片请求可生成 `tool:image.generate` 计划。
 
 输出：
@@ -187,6 +190,7 @@ reply.mood
 reply.safety
 reply.tool
 reply.source
+reply.responseProfile
 ```
 
 ## 06 ImageAgent：图像计划师
@@ -206,11 +210,17 @@ src/tools/imageGeneration.js
 
 ImageAgent 不直接画图。它先把 TextAgent 的结果变成可执行的图片计划，保留用户本轮意图、角色视觉设定、参考图模式和 prompt。前端拿到计划后，再调用 `/api/image` 真正生成图片。
 
+图片请求不是固定“只发图”。ImageAgent 会为本轮选择交付节奏：
+
+- `image_only`：只发图片。
+- `text_before_image`：TextAgent 先说一句，再发图片。
+- `image_then_text`：先发图片，图片气泡下方带一句图后配文。
+
 图片链路：
 
 ```text
 routerAgent 判断需要 image
-  -> imageAgent 生成 image output plan
+  -> imageAgent 生成 image output plan + delivery
   -> 前端调用 /api/image
   -> 远程模型接口或自部署图片模型
   -> 图片消息写入 SQLite

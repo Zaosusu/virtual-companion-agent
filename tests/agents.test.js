@@ -110,6 +110,40 @@ test("agent voice experience settings are saved with safe defaults", () => {
   });
 });
 
+test("agent response experience settings are saved with safe defaults", () => {
+  withStore((store) => {
+    const defaults = store.upsertAgent({
+      id: "response-defaults",
+      name: "Response Defaults",
+      persona: "A custom role.",
+      isBuiltin: false
+    });
+    assert.equal(defaults.responseStyle, "balanced");
+    assert.equal(defaults.creativityLevel, 0.6);
+    assert.equal(defaults.replyLength, 0.35);
+
+    const configured = store.upsertAgent({
+      ...defaults,
+      responseStyle: "dream",
+      creativityLevel: 0.9,
+      replyLength: 0.2
+    });
+    assert.equal(configured.responseStyle, "dream");
+    assert.equal(configured.creativityLevel, 0.9);
+    assert.equal(configured.replyLength, 0.2);
+
+    const normalized = store.upsertAgent({
+      ...configured,
+      responseStyle: "unknown-style",
+      creativityLevel: 5,
+      replyLength: -1
+    });
+    assert.equal(normalized.responseStyle, "balanced");
+    assert.equal(normalized.creativityLevel, 1);
+    assert.equal(normalized.replyLength, 0);
+  });
+});
+
 test("last active assistant can be used when regenerate id is stale", () => {
   withStore((store) => {
     const sessionId = "regen-agent";

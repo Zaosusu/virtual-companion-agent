@@ -1,4 +1,10 @@
-﻿const crisisPatterns = [
+﻿import { buildAgentModelRequest, buildResponseProfile } from "./modelPolicy.js";
+
+import { detectModalityIntent } from "./orchestrator/modalityIntent.js";
+
+export { buildResponseProfile } from "./modelPolicy.js";
+
+const crisisPatterns = [
   /自杀|轻生|不想活|结束生命|活不下去|伤害自己|割腕|跳楼/,
   /suicide|kill myself|self[- ]?harm/i
 ];
@@ -23,7 +29,7 @@ const workflowMap = [
   { workflow: "daily_checkin", re: /早安|晚安|打卡|签到|陪我|在吗/ }
 ];
 
-export async function createCompanionReply({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history, llm, traceId = "" }) {
+export async function createCompanionReply({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history, llm, traceId = "", turnContext = {} }) {
   const safety = detectSafety(message);
   const capability = detectCapabilityRequest(message);
 
@@ -67,13 +73,14 @@ export async function createCompanionReply({ character, memory, retrievedMemorie
 
   if (llm?.apiKey && llm?.baseUrl && llm?.model) {
     try {
-      const text = await callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId });
+      const result = await callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId, turnContext });
       return {
-        text,
+        text: result.text,
         mood: detectMood(message),
         workflow: detectWorkflow(message),
         source: llm.mode === "cloud_license" ? "cloud_license" : llm.mode === "free_quota" ? "cloud_license" : "llm",
         safety,
+        responseProfile: result.responseProfile,
         retrievedMemories
       };
     } catch (error) {
@@ -92,7 +99,7 @@ export async function createCompanionReply({ character, memory, retrievedMemorie
     };
   }
 
-  throw new Error("文字服务尚未可用，请先登录并确认授权服务已启动。");
+  throw new Error("文字服务尚未可用，请先登录并确认模型服务已可用。");
 }
 
 function hasUserAuthoredCharacter(character) {
@@ -179,7 +186,7 @@ function detectWorkflow(message) {
 }
 
 function detectCapabilityRequest(message) {
-  const wantsImageOutput = /自拍|拍一张|发张照片|发个照片|发个图|给我看|看看你|画一张|生成一张|生成图|出图|image|photo|picture/i.test(String(message || ""));
+  const wantsImageOutput = detectModalityIntent(message).image.explicit;
   return wantsImageOutput ? { type: "image_output", requested: true } : { type: "none", requested: false };
 }
 
@@ -391,18 +398,53 @@ function unique(items) {
   return [...new Set(items)];
 }
 
-async function callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId = "" }) {
-  const messages = buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety });
+function formatResponseProfileInstruction(profile = {}) {
+  const recent = profile.antiRepetition?.recentAssistant || [];
+  const rhythm = profile.narrativeRhythm || {};
+  const length = profile.lengthProfile || {};
+  return [
+    "text_agent 回复策略：",
+    `- 当前表达模式：${profile.strategy?.label || "自然平衡"}。`,
+    `- 策略说明：${profile.strategy?.instruction || "自然回应，避免模板化。"}`,
+    `- 本轮回复长短：${length.label || "偏短"}，目标 ${length.target || "2-4 句"}。${length.instruction || "默认短回复，不写成长段。"} `,
+    "- 长度硬规则：除非用户明确要求展开、写小剧场或详细解释，否则日常聊天优先短回复；不要把一个回复写成多段长独白。",
+    `- 本轮叙事节奏：${rhythm.label || "自然变化"}。${rhythm.instruction || "动作和对白顺序根据上下文自然变化。"}`,
+    "- 叙事编排规则：不要固定成“括号动作 + 对白”；可以是“对白 + 动作”、“动作 + 对白 + 动作”、“对白 + 动作 + 对白”或纯对白，按本轮节奏选择。",
+    "- 如果使用括号动作，动作块要短，不能连续多轮都用括号动作开头；台词必须承担主要情绪和信息。",
+    "- 反重复规则：不要连续使用相同句式开头；不要频繁说“我在”“慢慢来”“别太勉强自己”“我陪着你”。",
+    "- 每次回复至少加入一个新的具体细节、情绪判断、场景动作或主动追问；不要只复述安全边界。",
+    "- 如果用户只是短句或沉默，可以主动展开一点，但仍要服从本轮回复长短。",
+    recent.length ? `- 最近几条 assistant 回复片段，避免复读这些表达：${recent.join(" / ")}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+async function callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId = "", turnContext = {} }) {
+  const workflow = detectWorkflow(message);
+  const mood = detectMood(message);
+  const responseProfile = buildResponseProfile({
+    character,
+    message,
+    history,
+    retrievalPlan,
+    contextPlan,
+    safety,
+    workflow,
+    mood,
+    turnContext
+  });
+  const messages = buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, responseProfile });
   const startedAt = Date.now();
   logTrace(traceId, "text_agent.request", {
     mode: llm.mode,
     messageCount: messages.length,
     promptChars: messages.reduce((sum, item) => sum + String(item.content || "").length, 0),
-    memoryItems: Array.isArray(retrievedMemories) ? retrievedMemories.length : 0
+    memoryItems: Array.isArray(retrievedMemories) ? retrievedMemories.length : 0,
+    responseProfile
   });
 
   if (llm.mode === "cloud_license" || llm.mode === "free_quota") {
-    return callOfficialGateway({ llm, messages, temperature: 0.75, maxTokens: 1400, traceId, startedAt });
+    const text = await callOfficialGateway({ llm, messages, sampling: responseProfile.sampling, maxTokens: responseProfile.lengthProfile?.maxTokens, traceId, startedAt });
+    return { text, responseProfile };
   }
 
   const endpoint = `${llm.baseUrl.replace(/\/$/, "")}/chat/completions`;
@@ -410,7 +452,7 @@ async function callRemoteModel({ character, memory, retrievedMemories, retrieval
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${llm.apiKey}` },
     signal: modelTimeoutSignal(),
-    body: JSON.stringify(buildChatCompletionBody({ model: llm.model, messages, temperature: 0.75, maxTokens: 1400 }))
+    body: JSON.stringify(buildAgentModelRequest({ model: llm.model, messages, task: "text_reply", sampling: responseProfile.sampling, maxTokens: responseProfile.lengthProfile?.maxTokens }))
   });
   if (!response.ok) {
     const text = await response.text();
@@ -424,10 +466,10 @@ async function callRemoteModel({ character, memory, retrievedMemories, retrieval
     responseChars: text.length,
     shape: compactGatewayShape(data)
   });
-  return text;
+  return { text, responseProfile };
 }
 
-function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety }) {
+function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, responseProfile }) {
   const userSystemPrompt = String(character.runtime_config?.systemPrompt || "").trim();
   const userPersona = String(character.persona || "").trim();
   const userVoiceStyle = String(character.voice?.style || "").trim();
@@ -460,6 +502,7 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
     "只有当用户要求现实身份验证、现实线下行动、金钱交易、法律承诺、医疗建议，或要求证明现实身份时，才温和说明边界。",
     "如果用户正在用逝去亲人的资料做角色，要温柔承接怀念和哀伤，但避免制造依赖或替代现实哀悼支持。",
     "人物资料库必须先经过 context_agent 的身份归属判断再使用。不要自行把 blockedFacts 恢复成事实。",
+    formatResponseProfileInstruction(responseProfile),
     formatEvidenceInstruction(retrievalPlan),
     formatAllowedEvidence(retrievedMemories, retrievalPlan),
     llm.imageOutputAvailable ? "当前配置声明支持图片输出。" : "当前配置未声明图片输出能力。",
@@ -604,26 +647,10 @@ function formatPersonaMemory(memory = {}) {
     .join("\n");
 }
 
-function buildChatCompletionBody({ model, messages, temperature, maxTokens }) {
-  const body = {
-    model,
-    messages,
-    temperature,
-    max_tokens: maxTokens
-  };
-  if (supportsStepFunReasoningEffort(model)) {
-    body.reasoning_effort = "low";
-  }
-  return body;
-}
-
-function supportsStepFunReasoningEffort(model) {
-  return ["step-3.7-flash", "step-3.5-flash-2603", "step-3.5-flash"].includes(String(model || ""));
-}
-
-async function callOfficialGateway({ llm, messages, temperature, maxTokens, traceId = "", startedAt = Date.now() }) {
+async function callOfficialGateway({ llm, messages, sampling = {}, maxTokens = null, traceId = "", startedAt = Date.now() }) {
   const endpoint = `${llm.baseUrl.replace(/\/$/, "")}/api/chat`;
-  logTrace(traceId, "official_gateway.request", { endpoint, maxTokens });
+  const body = buildAgentModelRequest({ model: llm.model, messages, task: "text_reply", sampling, maxTokens });
+  logTrace(traceId, "official_gateway.request", { endpoint, maxTokens: body.max_tokens });
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -632,7 +659,7 @@ async function callOfficialGateway({ llm, messages, temperature, maxTokens, trac
       ...(traceId ? { "x-request-id": traceId } : {})
     },
     signal: modelTimeoutSignal(),
-    body: JSON.stringify({ model: llm.model, messages, temperature, max_tokens: maxTokens })
+    body: JSON.stringify(body)
   });
   if (!response.ok) {
     const text = await response.text();

@@ -107,7 +107,7 @@ step-3.5-flash
 step-router-v1
 ```
 
-支持推理强度的模型可以携带：
+底层 provider payload 由 `src/modelPolicy.js` 按 Agent 任务类型生成。支持推理强度的模型可以在 gateway 层携带类似字段，但前端和角色配置不直接提交这类模型参数：
 
 ```json
 {
@@ -138,7 +138,7 @@ step-image-edit-2
 
 有参考图时使用 `/images/edits`，无参考图时使用 `/images/generations`。
 
-默认请求参数：
+图片请求参数同样由策略层生成。用户侧只表达图片意图、参考图模式和可理解的质量/风格偏好；gateway 层再映射为 StepFun API 字段，例如：
 
 ```json
 {

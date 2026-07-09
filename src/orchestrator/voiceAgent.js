@@ -60,7 +60,7 @@ export function buildVoiceAgentDecision({ text = "", context = {}, agent = {} })
     primary.instruction,
     ...support,
     characterStyle ? `角色自定义声音风格：${characterStyle}` : "",
-    "保留口语里的短暂停顿和呼吸感；不要把括号里的动作描写当成说明书朗读，应该转化成对应语气。"
+    "保留口语里的短暂停顿和呼吸感；只朗读角色真正说出口的话，括号里的动作、神态、内心和场景描写不要逐字念出来，只转化成停顿、语气和情绪。"
   ].filter(Boolean).join("；");
 
   return {

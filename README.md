@@ -149,7 +149,7 @@ COMPANION_FREE_DAILY_CHAT_LIMIT=10
 Windows 发行版在：
 
 ```text
-release/虚拟角色智能体 0.1.0.exe
+release/2link：虚拟角色智能体 0.1.0.exe
 ```
 
 普通用户双击 exe 即可使用，无需运行 `npm start` 或手动打开 `localhost`。
@@ -194,7 +194,9 @@ npm test
 server.js                         本地 API 入口
 public/app.js                     前端主逻辑
 src/orchestrator/                 Agent 编排层
+src/orchestrator/memoryPolicy.js  CRAG 召回评分与证据质量策略
 src/agent.js                      文本 Agent 核心逻辑
+src/modelPolicy.js                模型请求参数与生成策略抽象层
 src/db.js                         SQLite 数据与记忆层
 src/config.js                     模型配置与模式选择
 src/tools/imageGeneration.js      图片工具
@@ -203,6 +205,8 @@ tests/                            最小测试
 docs/architecture.md              技术架构文档
 docs/architecture-story.md        架构故事导览
 docs/agent-roles-storyboard.md    Agent 职责故事板
+docs/response-style-api.md        回复风格调节接口
+docs/response-style-desktop-alignment.md  电脑端回复方式对齐说明
 ```
 
 ## 环境配置

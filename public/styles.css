@@ -621,6 +621,10 @@ body.right-collapsed .side-panel .collapsed-toggle {
   background: white;
 }
 
+.image-caption {
+  margin-top: 10px;
+}
+
 .message.system .message-body {
   background: rgba(255, 248, 223, 0.82);
 }
@@ -851,6 +855,16 @@ body.right-collapsed .side-panel .collapsed-toggle {
 .config-form .voice-tuning-grid {
   grid-template-columns: 1fr;
   gap: 10px;
+}
+
+.response-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.response-controls .range-control {
+  min-width: 0;
 }
 
 .config-form .range-control {

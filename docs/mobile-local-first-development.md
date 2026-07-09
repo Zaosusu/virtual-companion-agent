@@ -1,49 +1,60 @@
-# 手机端本地优先版开发文档
+# 手机端本地优先方案
 
-本文档面向开发人员，目标是把当前项目改造成“所有用户共用同一个网页，但用户私密数据只保存在自己手机里，云端只做模型和搜索中转”的公网手机端版本。
+本文档面向开发人员，说明公开客户端在移动端场景下的本地优先方案：用户可以访问同一套 H5/PWA 前端，但角色、人设、聊天记录、图片和长期记忆默认保存在用户自己的设备中；服务端只承担模型、搜索、授权和额度校验等必要中转职责。
 
-## 1. 目标
+## 1. 架构目标
 
-公网手机端采用本地优先架构：
+移动端采用本地优先架构：
 
 - 所有用户访问同一个 H5/PWA 页面。
 - 角色、人设、聊天记录、背景图、参考图、长期记忆保存在用户手机本地。
 - 云端只做临时中转：模型请求、联网搜索、授权/额度校验。
 - 云端不落库聊天正文、不落库图片、不落库角色设定、不打印敏感日志。
-- 当前服务端 SQLite 继续保留给“本地单机版/桌面版”，不要直接作为公网多人版本的数据层。
+- 本地 SQLite 适用于单机运行和桌面版；多人公网部署应使用无状态 relay 与独立的授权/额度数据层。
 
-## 2. 当前代码现状
+## 2. 运行模式边界
 
-当前项目有服务端 SQLite：
+公开客户端支持两类运行模式：
 
-- `server.js` 创建 `data/companion.sqlite`
-- `src/db.js` 使用 `node:sqlite`
-- 服务端表包含 `agents`、`messages`、`memories`、`model_config` 等
-- `/api/bootstrap` 从服务端读取角色和最近消息
-- `/api/chat` 会把用户消息和 AI 回复写入服务端 SQLite
+```text
+本地单机/桌面模式
+  -> local Node API
+  -> local SQLite
+  -> 用户配置的模型服务
+```
 
-这适合单人本地运行，不适合直接部署为公网多人服务。公网版本必须避免所有用户共用一个 `companion.sqlite`。
+```text
+移动端公网模式
+  -> H5/PWA + IndexedDB
+  -> 无状态 relay
+  -> 授权/额度服务
+  -> 模型供应商或自部署模型服务
+```
 
-## 3. 推荐目录改造
+多人公网部署不应把用户聊天、角色和图片写入同一个服务端 SQLite。服务端只保存授权、额度、审计和必要运行指标，不保存聊天正文、完整 prompt、角色设定或图片原文。
 
-新增前端本地存储层：
+## 3. 推荐目录规划
+
+移动端本地优先能力可以按以下目录组织：
 
 ```text
 public/
   app.js
-  storage.js              # 新增：IndexedDB 封装
+  storage.js              # IndexedDB 封装
   mobile.js               # 可选：手机端交互/抽屉逻辑
   pwa/
-    manifest.json         # 新增：PWA 配置
-    service-worker.js     # 新增：静态资源缓存
+    manifest.json         # PWA 配置
+    service-worker.js     # 静态资源缓存
 
-server.js                 # 保留本地单机版
-server-relay.js           # 新增：公网无状态中转服务，推荐单独入口
+server.js                 # 本地单机/桌面入口
+server-relay.js           # 公网无状态 relay 入口，可独立部署
 src/
+  orchestrator/           # Agent 编排
+  modelPolicy.js          # 模型请求策略抽象
   relay/
-    chatRelay.js          # 新增：模型中转
-    searchRelay.js        # 新增：联网搜索中转
-    quota.js              # 新增：额度/限流
+    chatRelay.js          # 模型中转
+    searchRelay.js        # 联网搜索中转
+    quota.js              # 额度/限流
 ```
 
 不要在公网模式里复用 `CompanionStore` 保存用户聊天状态。

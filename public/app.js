@@ -49,6 +49,11 @@ const modelConfigStatus = $("#modelConfigStatus");
 const modelConfigHint = $("#modelConfigHint");
 const experienceStatus = $("#experienceStatus");
 const experienceImageStyle = $("#experienceImageStyle");
+const responseStyle = $("#responseStyle");
+const creativityLevel = $("#creativityLevel");
+const creativityLevelValue = $("#creativityLevelValue");
+const replyLength = $("#replyLength");
+const replyLengthValue = $("#replyLengthValue");
 const chatBackgroundInput = $("#chatBackgroundInput");
 const chatBackgroundPreview = $("#chatBackgroundPreview");
 const chatBackgroundOpacity = $("#chatBackgroundOpacity");
@@ -514,6 +519,23 @@ experienceImageStyle.addEventListener("change", () => {
   queueExperienceSave();
 });
 
+responseStyle?.addEventListener("change", () => {
+  if (state.activeAgent) state.activeAgent.responseStyle = responseStyle.value;
+  queueExperienceSave();
+});
+
+creativityLevel?.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.creativityLevel = normalizeRatioValue(creativityLevel.value, 0.6);
+  renderCreativityLevelValue();
+  queueExperienceSave();
+});
+
+replyLength?.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.replyLength = normalizeRatioValue(replyLength.value, 0.35);
+  renderReplyLengthValue();
+  queueExperienceSave();
+});
+
 agentAvatarImageInput?.addEventListener("change", async () => {
   const file = agentAvatarImageInput.files?.[0];
   if (!file) return;
@@ -651,6 +673,8 @@ installRangeDrag(voiceVolume);
 installRangeDrag(voiceExpressiveness);
 installRangeDrag(voiceWarmth);
 installRangeDrag(voiceClarity);
+installRangeDrag(creativityLevel);
+installRangeDrag(replyLength);
 
 autoReadToggle.addEventListener("change", () => {
   if (state.activeAgent) state.activeAgent.autoRead = autoReadToggle.checked;
@@ -1021,40 +1045,46 @@ async function runFrontAgents({ userText, result }) {
     : Array.isArray(result.outputs)
       ? result.outputs
       : [];
-  const outputs = plannedOutputs.filter((output) => output.type === "text");
+  const outputs = [];
   const shouldAutoRead = Boolean(state.activeAgent?.autoRead && state.modelConfig?.capabilities?.voice);
 
-  for (const output of plannedOutputs.filter((item) => item.type === "image")) {
-    const prompt = output.prompt || reply.tool?.input?.prompt || reply.text || "";
-    try {
-      const imageResult = await api("/api/image", {
-        method: "POST",
-        body: JSON.stringify({ prompt, content: output.content || "给你发来一张图片。" })
-      });
-      outputs.push({ ...output, prompt, image: imageResult.image });
-    } catch (error) {
-      if (isUpgradeRequiredError(error)) throw error;
-      outputs.push({ ...output, prompt, error: error.message });
+  for (const output of plannedOutputs) {
+    if (output.type === "text") {
+      outputs.push(output);
+      continue;
     }
-  }
-
-  for (const output of plannedOutputs.filter((item) => item.type === "voice")) {
-    const text = output.text || reply.text || "";
-    try {
-      const audio = await api("/api/tts", {
-        method: "POST",
-        body: JSON.stringify(buildTtsRequestBody(text, output.context || {
-            userText,
-            replyText: text,
-            mood: reply.mood || "",
-            workflow: reply.workflow || "",
-            history: getVisibleChatHistory(20)
-          }, { persistMessage: true }))
-      });
-      outputs.push({ ...output, text, audio, autoPlay: shouldAutoRead });
-    } catch (error) {
-      if (isUpgradeRequiredError(error)) throw error;
-      outputs.push({ ...output, text, error: error.message });
+    if (output.type === "image") {
+      const prompt = output.prompt || reply.tool?.input?.prompt || reply.text || "";
+      try {
+        const imageResult = await api("/api/image", {
+          method: "POST",
+          body: JSON.stringify({ prompt, content: output.content ?? "给你发来一张图片。" })
+        });
+        outputs.push({ ...output, prompt, image: imageResult.image, imageMessage: imageResult.message || null });
+      } catch (error) {
+        if (isUpgradeRequiredError(error)) throw error;
+        outputs.push({ ...output, prompt, error: error.message });
+      }
+      continue;
+    }
+    if (output.type === "voice") {
+      const text = output.text || reply.text || "";
+      try {
+        const audio = await api("/api/tts", {
+          method: "POST",
+          body: JSON.stringify(buildTtsRequestBody(text, output.context || {
+              userText,
+              replyText: text,
+              mood: reply.mood || "",
+              workflow: reply.workflow || "",
+              history: getVisibleChatHistory(20)
+            }, { persistMessage: true }))
+        });
+        outputs.push({ ...output, text, audio, autoPlay: shouldAutoRead });
+      } catch (error) {
+        if (isUpgradeRequiredError(error)) throw error;
+        outputs.push({ ...output, text, error: error.message });
+      }
     }
   }
 
@@ -1175,12 +1205,14 @@ function renderAssistantOutputs(result, quotaText = "", options = {}) {
     }
     if (output.type === "image") {
       const image = output.image || {};
-      addMessage("assistant", output.error ? `图片生成失败：${output.error}` : "", {
+      const savedMessage = output.imageMessage || null;
+      addMessage("assistant", output.error ? `图片生成失败：${output.error}` : savedMessage?.content ?? output.content ?? "", {
         meta: `${baseMeta} · 图片`,
+        messageId: savedMessage?.id || output.message_id,
         metadata: {
           type: output.error ? "tool_error" : "image",
-          imageUrl: image.url || "",
-          b64Json: image.b64Json || "",
+          imageUrl: savedMessage?.metadata?.imageUrl || image.url || "",
+          b64Json: savedMessage?.metadata?.b64Json || image.b64Json || "",
           error: output.error || ""
         }
       });
@@ -1251,6 +1283,11 @@ function renderAgent() {
   agentOpening.value = agent.openingMessage || "";
   agentSystemPrompt.value = agent.systemPrompt || "";
   experienceImageStyle.value = agent.imageStyle || "realistic";
+  if (responseStyle) responseStyle.value = normalizeResponseStyleValue(agent.responseStyle);
+  if (creativityLevel) creativityLevel.value = String(normalizeRatioValue(agent.creativityLevel, 0.6));
+  if (replyLength) replyLength.value = String(normalizeRatioValue(agent.replyLength, 0.35));
+  renderCreativityLevelValue();
+  renderReplyLengthValue();
   chatBackgroundOpacity.value = String(agent.chatBackgroundOpacity ?? 0.18);
   chatBackgroundBlur.value = String(agent.chatBackgroundBlur ?? 0);
   agentVoiceGender.value = agent.voiceGender || "female";
@@ -1626,6 +1663,9 @@ async function saveExperienceSettings() {
         agent: {
           id: state.activeAgent.id,
           imageStyle: experienceImageStyle.value,
+          responseStyle: normalizeResponseStyleValue(responseStyle?.value),
+          creativityLevel: normalizeRatioValue(creativityLevel?.value, 0.6),
+          replyLength: normalizeRatioValue(replyLength?.value, 0.35),
           chatBackground: state.clearChatBackground ? null : state.pendingChatBackground || state.activeAgent?.chatBackground || null,
           clearChatBackground: state.clearChatBackground,
           chatBackgroundOpacity: Number(chatBackgroundOpacity.value || 0),
@@ -1741,11 +1781,18 @@ function createMessageNode(role, content, options = {}) {
   const b64Json = options.metadata?.b64Json;
   if (options.metadata?.type === "image" && (imageUrl || b64Json)) {
     body.textContent = "";
+    const caption = String(content || "").trim();
     const img = document.createElement("img");
     img.className = "generated-image";
     img.alt = "生成图片";
     img.src = imageUrl || `data:image/png;base64,${b64Json}`;
     body.appendChild(img);
+    if (caption) {
+      const captionNode = document.createElement("div");
+      captionNode.className = "image-caption";
+      captionNode.textContent = caption;
+      body.appendChild(captionNode);
+    }
   } else if (options.metadata?.type === "voice" && (options.metadata.audio || options.metadata.audioUrl || options.metadata.audioBase64)) {
     renderVoiceBubble(body, {
       audio: normalizeVoiceAudio(options.metadata),
@@ -2083,6 +2130,9 @@ function readAgentForm() {
     openingMessage: agentOpening.value.trim(),
     systemPrompt: agentSystemPrompt.value.trim(),
     imageStyle: experienceImageStyle.value || "realistic",
+    responseStyle: normalizeResponseStyleValue(responseStyle?.value),
+    creativityLevel: normalizeRatioValue(creativityLevel?.value, 0.6),
+    replyLength: normalizeRatioValue(replyLength?.value, 0.35),
     visualContext: agentVisualContext.value.trim(),
     voiceGender: agentVoiceGender.value,
     voiceTone: agentVoiceTone.value,
@@ -2474,6 +2524,11 @@ function normalizeRatioValue(value, fallback = 0.5) {
   return roundToStep(Math.min(1, Math.max(0, number)), 2);
 }
 
+function normalizeResponseStyleValue(value) {
+  const style = String(value || "").trim();
+  return ["balanced", "vivid", "dream", "lover", "reserved", "story"].includes(style) ? style : "balanced";
+}
+
 function roundToStep(value, digits = 2) {
   return Number(value.toFixed(digits));
 }
@@ -2484,6 +2539,22 @@ function renderVoiceTuningValues() {
   if (voiceExpressivenessValue) voiceExpressivenessValue.textContent = `${Math.round(normalizeRatioValue(voiceExpressiveness?.value, 0.6) * 100)}%`;
   if (voiceWarmthValue) voiceWarmthValue.textContent = `${Math.round(normalizeRatioValue(voiceWarmth?.value, 0.7) * 100)}%`;
   if (voiceClarityValue) voiceClarityValue.textContent = `${Math.round(normalizeRatioValue(voiceClarity?.value, 0.65) * 100)}%`;
+}
+
+function renderCreativityLevelValue() {
+  if (creativityLevelValue) creativityLevelValue.textContent = `${Math.round(normalizeRatioValue(creativityLevel?.value, 0.6) * 100)}%`;
+}
+
+function getReplyLengthLabel(value) {
+  const normalized = normalizeRatioValue(value, 0.35);
+  if (normalized <= 0.22) return "很短";
+  if (normalized <= 0.45) return "偏短";
+  if (normalized <= 0.72) return "适中";
+  return "详细";
+}
+
+function renderReplyLengthValue() {
+  if (replyLengthValue) replyLengthValue.textContent = getReplyLengthLabel(replyLength?.value);
 }
 
 function installRangeDrag(input) {

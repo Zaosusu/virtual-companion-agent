@@ -53,7 +53,9 @@
 server.js                         本地 API 入口
 public/app.js                     前端主逻辑
 src/orchestrator/                 Agent 编排层
+src/orchestrator/memoryPolicy.js  CRAG 召回评分与证据质量策略
 src/agent.js                      文本 Agent 核心陪伴逻辑
+src/modelPolicy.js                模型请求参数与生成策略抽象层
 src/db.js                         SQLite 数据与记忆层
 src/config.js                     模型模式与配置解析
 src/tools/imageGeneration.js      图片工具
@@ -235,7 +237,7 @@ Agent 分工：
 | --- | --- | --- |
 | contextAgent | `src/orchestrator/contextAgent.js` | 整理角色、人设、记忆和阻断事实 |
 | routerAgent | `src/orchestrator/routerAgent.js` | 判断本轮输出 text / image / voice |
-| textAgent | `src/orchestrator/textAgent.js` | 调用 `src/agent.js` 生成文本回复 |
+| textAgent | `src/orchestrator/textAgent.js` | 调用 `src/agent.js` 生成文本回复，并按场景生成 `responseProfile` |
 | imageAgent | `src/orchestrator/imageAgent.js` | 根据文本 Agent 结果生成图片工具计划 |
 | voiceAgent | `src/orchestrator/voiceAgent.js` | 生成语音工具计划和情绪演绎指令 |
 | reviewAgent | `src/orchestrator/reviewAgent.js` | 复核输出通道内容 |
@@ -243,6 +245,8 @@ Agent 分工：
 | safetyAgent | `src/orchestrator/safetyAgent.js` | 安全风险识别边界 |
 
 ## 6. 聊天链路
+
+模型请求参数、回复长度和回复结构策略不在各业务文件中直接写死。`src/modelPolicy.js` 负责把用户可理解的偏好、Agent 任务类型、CRAG 严格证据、安全等级和最近回复形态转换为模型请求参数、`lengthProfile` 与 `narrativeRhythm`。前端只提交 `responseStyle`、`creativityLevel`、`replyLength` 等语义配置；内部 Agent 如 context/review/vision 使用各自任务策略。
 
 ### 后端链路
 
@@ -255,7 +259,7 @@ POST /api/chat
   5. retrieveMemories() 召回长期记忆
   6. orchestrateCompanionTurn()
      - contextAgent 整理上下文
-     - textAgent 生成回复
+     - textAgent 生成回复，并动态决策回复策略与采样配置
      - routerAgent 判断输出形态
      - imageAgent / voiceAgent 生成工具计划
      - reviewAgent 复核
@@ -275,9 +279,9 @@ sendMessage()
   -> POST /api/chat
   -> render RAG / memory
   -> runFrontAgents()
-     -> 渲染 text output
-     -> 按 image output 调用 /api/image
-     -> 按 voice output 调用 /api/tts
+     -> 按 orchestration.outputs 顺序执行 text / image / voice
+     -> image output 调用 /api/image
+     -> voice output 调用 /api/tts
   -> renderAssistantOutputs()
 ```
 
@@ -285,6 +289,7 @@ sendMessage()
 
 ```text
 orchestration.outputs[type=image]
+  -> imageAgent.delivery 决定 image_only / text_before_image / image_then_text
   -> 前端调用 POST /api/image
     -> server.js 选择模型通道
       -> remote model provider /api/image
@@ -313,6 +318,8 @@ finishReason
 referenceMode
 imageEndpoint
 ```
+
+当 `delivery=image_then_text` 时，图后配文随图片消息一起持久化；当 `delivery=text_before_image` 时，TextAgent 的短句会排在图片输出之前渲染。
 
 ## 8. 语音链路
 

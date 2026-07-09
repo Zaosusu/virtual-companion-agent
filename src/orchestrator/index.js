@@ -14,7 +14,8 @@ export async function orchestrateCompanionTurn({
   history = [],
   llm,
   modelConfig,
-  traceId = ""
+  traceId = "",
+  turnContext = {}
 }) {
   const contextPlan = await runContextAgent({
     agent,
@@ -25,7 +26,8 @@ export async function orchestrateCompanionTurn({
     message,
     history,
     llm,
-    traceId
+    traceId,
+    turnContext
   });
   const textResult = await runTextAgent({
     character,
@@ -62,7 +64,11 @@ export async function orchestrateCompanionTurn({
       agents: {
         context_agent: summarizeContextAgent(contextPlan),
         memory_agent: summarizeMemoryAgent(retrievalPlan),
-        text_agent: { enabled: true, source: reply.source || "local" },
+        text_agent: {
+          enabled: true,
+          source: reply.source || "local",
+          responseProfile: reply.responseProfile || null
+        },
         image_agent: router.imageAgent,
         voice_agent: router.voiceAgent,
         review_agent: summarizeReviewAgent(outputs)
@@ -108,6 +114,19 @@ function summarizeReviewAgent(outputs = []) {
 async function buildOutputPlan({ agent, character, reply, router, userText, history, llm }) {
   const shouldRenderText = reply.source !== "tool:image.generate" && !router.voiceAgent?.enabled;
   const outputs = [];
+  const imagePlan = buildImageOutputPlan({ reply, router, userText, history, character });
+  const imageDelivery = imagePlan?.delivery || null;
+
+  if (reply.source === "tool:image.generate" && imageDelivery?.mode === "text_before_image" && imageDelivery.text) {
+    outputs.push({
+      type: "text",
+      agent: "text_agent",
+      text: imageDelivery.text,
+      source: "image_delivery",
+      delivery: imageDelivery
+    });
+  }
+
   if (shouldRenderText && String(reply.text || "").trim()) {
     outputs.push({
       type: "text",
@@ -117,7 +136,6 @@ async function buildOutputPlan({ agent, character, reply, router, userText, hist
     });
   }
 
-  const imagePlan = buildImageOutputPlan({ reply, router, userText });
   if (imagePlan) outputs.push(imagePlan);
 
   const voicePlan = await buildVoiceOutputPlan({ reply, router, userText, history, agent, character, llm });

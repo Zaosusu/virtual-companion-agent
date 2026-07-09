@@ -51,22 +51,25 @@ test("opening an old database migrates once and creates a backup", () => {
 
   const store = new CompanionStore(dbPath);
   try {
-    assert.equal(store.getSchemaVersion(), 5);
+    assert.equal(store.getSchemaVersion(), 7);
     assert.ok(store.db.prepare("PRAGMA table_info(messages)").all().some((column) => column.name === "updated_at"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "chat_background_data"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "auto_read"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "voice_expressiveness"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "response_style"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "creativity_level"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "reply_length"));
   } finally {
     store.close();
   }
 
-  const backups = readdirSync(dir).filter((name) => name.startsWith("old.sqlite.bak-v2-to-v5-"));
+  const backups = readdirSync(dir).filter((name) => name.startsWith("old.sqlite.bak-v2-to-v7-"));
   assert.equal(backups.length, 1);
   assert.ok(existsSync(path.join(dir, backups[0])));
 
   const reopened = new CompanionStore(dbPath);
   try {
-    assert.equal(reopened.getSchemaVersion(), 5);
+    assert.equal(reopened.getSchemaVersion(), 7);
   } finally {
     reopened.close();
     rmSync(dir, { recursive: true, force: true });

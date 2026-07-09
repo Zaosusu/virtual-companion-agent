@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildFtsQuery, cosineSimilarity, embedText, searchableText } from "./rag.js";
 
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 7;
 
 export class CompanionStore {
   constructor(dbPath) {
@@ -117,6 +117,9 @@ export class CompanionStore {
         voice_expressiveness REAL NOT NULL DEFAULT 0.6,
         voice_warmth REAL NOT NULL DEFAULT 0.7,
         voice_clarity REAL NOT NULL DEFAULT 0.65,
+        response_style TEXT NOT NULL DEFAULT 'balanced',
+        creativity_level REAL NOT NULL DEFAULT 0.6,
+        reply_length REAL NOT NULL DEFAULT 0.35,
         cloned_voice_id TEXT NOT NULL DEFAULT '',
         voice_sample_name TEXT NOT NULL DEFAULT '',
         reference_image_data TEXT NOT NULL DEFAULT '',
@@ -231,6 +234,8 @@ export class CompanionStore {
       if (fromVersion < 3) this.migrateTo3();
       if (fromVersion < 4) this.migrateTo4();
       if (fromVersion < 5) this.migrateTo5();
+      if (fromVersion < 6) this.migrateTo6();
+      if (fromVersion < 7) this.migrateTo7();
       this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
       this.db.exec("COMMIT;");
       if (backupPath) console.log(`[db] schema migrated ${fromVersion} -> ${CURRENT_SCHEMA_VERSION}; backup: ${backupPath}`);
@@ -322,6 +327,15 @@ export class CompanionStore {
     this.ensureColumn("agents", "voice_expressiveness", "REAL NOT NULL DEFAULT 0.6");
     this.ensureColumn("agents", "voice_warmth", "REAL NOT NULL DEFAULT 0.7");
     this.ensureColumn("agents", "voice_clarity", "REAL NOT NULL DEFAULT 0.65");
+  }
+
+  migrateTo6() {
+    this.ensureColumn("agents", "response_style", "TEXT NOT NULL DEFAULT 'balanced'");
+    this.ensureColumn("agents", "creativity_level", "REAL NOT NULL DEFAULT 0.6");
+  }
+
+  migrateTo7() {
+    this.ensureColumn("agents", "reply_length", "REAL NOT NULL DEFAULT 0.35");
   }
 
   ensureIndexes() {
@@ -668,6 +682,9 @@ export class CompanionStore {
         voice_expressiveness AS voiceExpressiveness,
         voice_warmth AS voiceWarmth,
         voice_clarity AS voiceClarity,
+        response_style AS responseStyle,
+        creativity_level AS creativityLevel,
+        reply_length AS replyLength,
         cloned_voice_id AS clonedVoiceId,
         voice_sample_name AS voiceSampleName,
         reference_image_data AS referenceImageData,
@@ -704,6 +721,7 @@ export class CompanionStore {
         opening_message, system_prompt, image_style, visual_context,
         voice_gender, voice_tone, auto_read, voice_speed, voice_volume,
         voice_expressiveness, voice_warmth, voice_clarity,
+        response_style, creativity_level, reply_length,
         cloned_voice_id, voice_sample_name,
         reference_image_data, reference_image_mime, reference_image_name,
         chat_background_data, chat_background_mime, chat_background_name,
@@ -711,7 +729,7 @@ export class CompanionStore {
         boundaries_json, safety_rules_json,
         prompts_json, is_builtin, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         avatar = excluded.avatar,
@@ -737,6 +755,9 @@ export class CompanionStore {
         voice_expressiveness = excluded.voice_expressiveness,
         voice_warmth = excluded.voice_warmth,
         voice_clarity = excluded.voice_clarity,
+        response_style = excluded.response_style,
+        creativity_level = excluded.creativity_level,
+        reply_length = excluded.reply_length,
         cloned_voice_id = excluded.cloned_voice_id,
         voice_sample_name = excluded.voice_sample_name,
         reference_image_data = excluded.reference_image_data,
@@ -777,6 +798,9 @@ export class CompanionStore {
       normalizeRatio(agent.voiceExpressiveness, 0.6),
       normalizeRatio(agent.voiceWarmth, 0.7),
       normalizeRatio(agent.voiceClarity, 0.65),
+      normalizeResponseStyle(agent.responseStyle),
+      normalizeRatio(agent.creativityLevel, 0.6),
+      normalizeRatio(agent.replyLength, 0.35),
       String(agent.clonedVoiceId || "").trim(),
       String(agent.voiceSampleName || "").trim(),
       agent.clearReferenceImage ? "" : String(agent.referenceImage?.data || agent.referenceImageData || "").trim(),
@@ -1340,6 +1364,9 @@ function deserializeAgent(row) {
     voiceExpressiveness: normalizeRatio(row.voiceExpressiveness, 0.6),
     voiceWarmth: normalizeRatio(row.voiceWarmth, 0.7),
     voiceClarity: normalizeRatio(row.voiceClarity, 0.65),
+    responseStyle: normalizeResponseStyle(row.responseStyle),
+    creativityLevel: normalizeRatio(row.creativityLevel, 0.6),
+    replyLength: normalizeRatio(row.replyLength, 0.35),
     clonedVoiceId: row.clonedVoiceId || "",
     voiceSampleName: row.voiceSampleName || "",
     referenceImage: row.referenceImageData ? {
@@ -1437,6 +1464,18 @@ function normalizeRatio(value, fallback = 0.5) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Number(Math.min(1, Math.max(0, number)).toFixed(2));
+}
+
+function normalizeResponseStyle(value) {
+  const style = String(value || "").trim();
+  return [
+    "balanced",
+    "vivid",
+    "dream",
+    "lover",
+    "reserved",
+    "story"
+  ].includes(style) ? style : "balanced";
 }
 
 function normalizeAudioFormat(value) {

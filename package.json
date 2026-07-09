@@ -26,7 +26,7 @@
   },
   "build": {
     "appId": "com.virtualcompanion.agent",
-    "productName": "虚拟角色智能体",
+    "productName": "2link：虚拟角色智能体",
     "directories": {
       "output": "release"
     },
@@ -57,7 +57,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "虚拟角色智能体"
+      "shortcutName": "2link：虚拟角色智能体"
     }
   },
   "dependencies": {
