@@ -51,20 +51,22 @@ test("opening an old database migrates once and creates a backup", () => {
 
   const store = new CompanionStore(dbPath);
   try {
-    assert.equal(store.getSchemaVersion(), 3);
+    assert.equal(store.getSchemaVersion(), 5);
     assert.ok(store.db.prepare("PRAGMA table_info(messages)").all().some((column) => column.name === "updated_at"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "chat_background_data"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "auto_read"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "voice_expressiveness"));
   } finally {
     store.close();
   }
 
-  const backups = readdirSync(dir).filter((name) => name.startsWith("old.sqlite.bak-v2-to-v3-"));
+  const backups = readdirSync(dir).filter((name) => name.startsWith("old.sqlite.bak-v2-to-v5-"));
   assert.equal(backups.length, 1);
   assert.ok(existsSync(path.join(dir, backups[0])));
 
   const reopened = new CompanionStore(dbPath);
   try {
-    assert.equal(reopened.getSchemaVersion(), 3);
+    assert.equal(reopened.getSchemaVersion(), 5);
   } finally {
     reopened.close();
     rmSync(dir, { recursive: true, force: true });

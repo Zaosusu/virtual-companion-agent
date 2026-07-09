@@ -59,6 +59,17 @@ const speakLastButton = $("#speakLastButton");
 const toolHint = $("#toolHint");
 const agentVoiceGender = $("#agentVoiceGender");
 const agentVoiceTone = $("#agentVoiceTone");
+const voiceSpeed = $("#voiceSpeed");
+const voiceSpeedValue = $("#voiceSpeedValue");
+const voiceVolume = $("#voiceVolume");
+const voiceVolumeValue = $("#voiceVolumeValue");
+const voiceExpressiveness = $("#voiceExpressiveness");
+const voiceExpressivenessValue = $("#voiceExpressivenessValue");
+const voiceWarmth = $("#voiceWarmth");
+const voiceWarmthValue = $("#voiceWarmthValue");
+const voiceClarity = $("#voiceClarity");
+const voiceClarityValue = $("#voiceClarityValue");
+const autoReadToggle = $("#autoReadToggle");
 const voiceCloneInput = $("#voiceCloneInput");
 const voiceSampleText = $("#voiceSampleText");
 const voiceClonePreview = $("#voiceClonePreview");
@@ -232,6 +243,12 @@ newAgentButton.addEventListener("click", async () => {
     systemPrompt: "请完全按照人设进行第一人称沉浸式对话。日常聊天不要跳出角色，不要解释自己是系统或模型。",
   imageStyle: "realistic",
   visualContext: "",
+  autoRead: false,
+  voiceSpeed: 1,
+  voiceVolume: 1,
+  voiceExpressiveness: 0.6,
+  voiceWarmth: 0.7,
+  voiceClarity: 0.65,
   avatarImage: null,
   referenceImage: null,
     prompts: ["陪我聊聊", "帮我拆一个计划"],
@@ -599,6 +616,47 @@ agentVoiceTone.addEventListener("change", () => {
   queueExperienceSave();
 });
 
+voiceSpeed.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.voiceSpeed = normalizeVoiceSpeedValue(voiceSpeed.value);
+  renderVoiceTuningValues();
+  queueExperienceSave();
+});
+
+voiceVolume.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.voiceVolume = normalizeVoiceVolumeValue(voiceVolume.value);
+  renderVoiceTuningValues();
+  queueExperienceSave();
+});
+
+voiceExpressiveness.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.voiceExpressiveness = normalizeRatioValue(voiceExpressiveness.value, 0.6);
+  renderVoiceTuningValues();
+  queueExperienceSave();
+});
+
+voiceWarmth.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.voiceWarmth = normalizeRatioValue(voiceWarmth.value, 0.7);
+  renderVoiceTuningValues();
+  queueExperienceSave();
+});
+
+voiceClarity.addEventListener("input", () => {
+  if (state.activeAgent) state.activeAgent.voiceClarity = normalizeRatioValue(voiceClarity.value, 0.65);
+  renderVoiceTuningValues();
+  queueExperienceSave();
+});
+
+installRangeDrag(voiceSpeed);
+installRangeDrag(voiceVolume);
+installRangeDrag(voiceExpressiveness);
+installRangeDrag(voiceWarmth);
+installRangeDrag(voiceClarity);
+
+autoReadToggle.addEventListener("change", () => {
+  if (state.activeAgent) state.activeAgent.autoRead = autoReadToggle.checked;
+  queueExperienceSave();
+});
+
 voiceCloneInput.addEventListener("change", async () => {
   const file = voiceCloneInput.files?.[0];
   if (!file) return;
@@ -692,13 +750,14 @@ async function applyAgentResult(result) {
 
 async function sendMessage(text) {
   addMessage("user", text);
+  const localVoiceExperience = currentVoiceExperienceSettings();
   try {
     const result = await api("/api/chat", {
       method: "POST",
       body: JSON.stringify({ message: text })
     });
     state.memory = result.memory;
-    state.activeAgent = result.agent || state.activeAgent;
+    state.activeAgent = mergeLocalVoiceExperience(result.agent || state.activeAgent, localVoiceExperience);
     renderRag(result.retrieved_memories || []);
     const quotaText = result.quota?.mode === "free_quota" ? ` · 免费剩余 ${result.quota.remaining}` : "";
     const routed = await runFrontAgents({ userText: text, result });
@@ -713,6 +772,7 @@ async function regenerateLastAssistant(messageId) {
   if (state.regeneratingMessageId || pendingChatCount > 0) return;
   const id = Number(messageId);
   if (!Number.isFinite(id)) return;
+  const localVoiceExperience = currentVoiceExperienceSettings();
   state.regeneratingMessageId = id;
   setBusy(true);
   refreshRegenerateButtons();
@@ -725,7 +785,7 @@ async function regenerateLastAssistant(messageId) {
       })
     });
     state.memory = result.memory || state.memory;
-    state.activeAgent = result.agent || state.activeAgent;
+    state.activeAgent = mergeLocalVoiceExperience(result.agent || state.activeAgent, localVoiceExperience);
     renderRag(result.retrieved_memories || []);
     renderMemory();
     if (result.recent_messages) {
@@ -962,6 +1022,7 @@ async function runFrontAgents({ userText, result }) {
       ? result.outputs
       : [];
   const outputs = plannedOutputs.filter((output) => output.type === "text");
+  const shouldAutoRead = Boolean(state.activeAgent?.autoRead && state.modelConfig?.capabilities?.voice);
 
   for (const output of plannedOutputs.filter((item) => item.type === "image")) {
     const prompt = output.prompt || reply.tool?.input?.prompt || reply.text || "";
@@ -982,21 +1043,40 @@ async function runFrontAgents({ userText, result }) {
     try {
       const audio = await api("/api/tts", {
         method: "POST",
-        body: JSON.stringify({
-          text,
-          context: output.context || {
+        body: JSON.stringify(buildTtsRequestBody(text, output.context || {
             userText,
             replyText: text,
             mood: reply.mood || "",
             workflow: reply.workflow || "",
             history: getVisibleChatHistory(20)
-          }
-        })
+          }, { persistMessage: true }))
       });
-      outputs.push({ ...output, text, audio });
+      outputs.push({ ...output, text, audio, autoPlay: shouldAutoRead });
     } catch (error) {
       if (isUpgradeRequiredError(error)) throw error;
       outputs.push({ ...output, text, error: error.message });
+    }
+  }
+
+  const hasVoiceOutput = outputs.some((output) => output.type === "voice");
+  const autoReadText = reply.source !== "tool:image.generate" ? String(reply.text || "").trim() : "";
+  let autoRead = null;
+  if (shouldAutoRead && autoReadText && !hasVoiceOutput) {
+    try {
+      const audio = await api("/api/tts", {
+        method: "POST",
+        body: JSON.stringify(buildTtsRequestBody(autoReadText, {
+          userText,
+          replyText: autoReadText,
+          mood: reply.mood || "",
+          workflow: reply.workflow || "",
+          history: getVisibleChatHistory(20)
+        }, { persistMessage: false }))
+      });
+      autoRead = { text: autoReadText, audio };
+    } catch (error) {
+      if (isUpgradeRequiredError(error)) throw error;
+      autoRead = { text: autoReadText, error: error.message };
     }
   }
 
@@ -1009,7 +1089,45 @@ async function runFrontAgents({ userText, result }) {
     });
   }
 
-  return { ...result, router, outputs, orchestration };
+  return { ...result, router, outputs, orchestration, autoRead };
+}
+
+function buildTtsRequestBody(text, context = {}, options = {}) {
+  return {
+    text,
+    input: text,
+    context,
+    voiceSpeed: normalizeVoiceSpeedValue(state.activeAgent?.voiceSpeed),
+    voiceVolume: normalizeVoiceVolumeValue(state.activeAgent?.voiceVolume),
+    voiceExpressiveness: normalizeRatioValue(state.activeAgent?.voiceExpressiveness, 0.6),
+    voiceWarmth: normalizeRatioValue(state.activeAgent?.voiceWarmth, 0.7),
+    voiceClarity: normalizeRatioValue(state.activeAgent?.voiceClarity, 0.65),
+    persistMessage: Boolean(options.persistMessage)
+  };
+}
+
+function currentVoiceExperienceSettings() {
+  return {
+    autoRead: Boolean(autoReadToggle?.checked),
+    voiceSpeed: normalizeVoiceSpeedValue(voiceSpeed?.value),
+    voiceVolume: normalizeVoiceVolumeValue(voiceVolume?.value),
+    voiceExpressiveness: normalizeRatioValue(voiceExpressiveness?.value, 0.6),
+    voiceWarmth: normalizeRatioValue(voiceWarmth?.value, 0.7),
+    voiceClarity: normalizeRatioValue(voiceClarity?.value, 0.65)
+  };
+}
+
+function mergeLocalVoiceExperience(agent, settings) {
+  if (!agent || !settings) return agent;
+  return {
+    ...agent,
+    autoRead: Boolean(settings.autoRead),
+    voiceSpeed: normalizeVoiceSpeedValue(settings.voiceSpeed),
+    voiceVolume: normalizeVoiceVolumeValue(settings.voiceVolume),
+    voiceExpressiveness: normalizeRatioValue(settings.voiceExpressiveness, 0.6),
+    voiceWarmth: normalizeRatioValue(settings.voiceWarmth, 0.7),
+    voiceClarity: normalizeRatioValue(settings.voiceClarity, 0.65)
+  };
 }
 
 function isUpgradeRequiredError(error) {
@@ -1041,11 +1159,19 @@ function renderAssistantOutputs(result, quotaText = "", options = {}) {
   for (const output of outputs) {
     if (options.skipText && output.type === "text") continue;
     if (output.type === "text" && String(output.text || "").trim()) {
-      addMessage("assistant", output.text, {
+      const textNode = addMessage("assistant", output.text, {
         meta: baseMeta,
         messageId: result.assistant_message_id,
         canRegenerate: Boolean(result.assistant_message_id)
       });
+      if (result.autoRead?.text === String(output.text || "").trim()) {
+        const button = textNode.querySelector(".voice-button");
+        if (result.autoRead.error) {
+          addMessage("system", `自动朗读失败：${result.autoRead.error}`);
+        } else if (button) {
+          setTimeout(() => playAudioResult(result.autoRead.audio, button, button.textContent || "\u6717\u8bfb"), 0);
+        }
+      }
     }
     if (output.type === "image") {
       const image = output.image || {};
@@ -1061,7 +1187,7 @@ function renderAssistantOutputs(result, quotaText = "", options = {}) {
     }
     if (output.type === "voice") {
       const savedMessage = output.audio?.message || null;
-      addMessage("assistant", output.error ? `语音生成失败：${output.error}` : output.text || reply.text || "", {
+      const voiceNode = addMessage("assistant", output.error ? `语音生成失败：${output.error}` : output.text || reply.text || "", {
         meta: `${baseMeta} · 语音`,
         messageId: savedMessage?.id || output.audio?.messageId,
         metadata: {
@@ -1071,6 +1197,10 @@ function renderAssistantOutputs(result, quotaText = "", options = {}) {
           error: output.error || ""
         }
       });
+      if (output.autoPlay && !output.error) {
+        const bubble = voiceNode.querySelector(".voice-bubble");
+        if (bubble) setTimeout(() => toggleVoicePlayback(normalizeTtsAudioResult(output.audio), bubble), 0);
+      }
     }
   }
 }
@@ -1125,6 +1255,13 @@ function renderAgent() {
   chatBackgroundBlur.value = String(agent.chatBackgroundBlur ?? 0);
   agentVoiceGender.value = agent.voiceGender || "female";
   agentVoiceTone.value = agent.voiceTone || "warm";
+  voiceSpeed.value = String(normalizeVoiceSpeedValue(agent.voiceSpeed));
+  voiceVolume.value = String(normalizeVoiceVolumeValue(agent.voiceVolume));
+  voiceExpressiveness.value = String(normalizeRatioValue(agent.voiceExpressiveness, 0.6));
+  voiceWarmth.value = String(normalizeRatioValue(agent.voiceWarmth, 0.7));
+  voiceClarity.value = String(normalizeRatioValue(agent.voiceClarity, 0.65));
+  renderVoiceTuningValues();
+  autoReadToggle.checked = Boolean(agent.autoRead);
   agentVisualContext.value = agent.visualContext || "";
   state.pendingReferenceImage = null;
   state.pendingAppearanceImage = null;
@@ -1495,7 +1632,13 @@ async function saveExperienceSettings() {
           chatBackgroundBlur: Number(chatBackgroundBlur.value || 0),
           gender: agentGender?.value || state.activeAgent.gender || "unspecified",
           voiceGender: agentVoiceGender.value,
-          voiceTone: agentVoiceTone.value
+          voiceTone: agentVoiceTone.value,
+          voiceSpeed: normalizeVoiceSpeedValue(voiceSpeed.value),
+          voiceVolume: normalizeVoiceVolumeValue(voiceVolume.value),
+          voiceExpressiveness: normalizeRatioValue(voiceExpressiveness.value, 0.6),
+          voiceWarmth: normalizeRatioValue(voiceWarmth.value, 0.7),
+          voiceClarity: normalizeRatioValue(voiceClarity.value, 0.65),
+          autoRead: autoReadToggle.checked
         }
       })
     });
@@ -1613,9 +1756,18 @@ function createMessageNode(role, content, options = {}) {
   } else {
     body.textContent = content;
   }
+  if (role === "assistant" && String(content || "").trim() && !["voice", "image", "tool_error"].includes(options.metadata?.type)) {
+    const actions = ensureMessageActions(node);
+    const readButton = document.createElement("button");
+    readButton.type = "button";
+    readButton.className = "voice-button";
+    readButton.textContent = "\u6717\u8bfb";
+    readButton.addEventListener("click", () => playSpeech(String(content || ""), readButton));
+    actions.appendChild(readButton);
+  }
   if (options.canRegenerate && role === "assistant" && options.messageId) {
-    const actions = document.createElement("div");
-    actions.className = "message-actions regenerate-actions";
+    const actions = ensureMessageActions(node);
+    actions.classList.add("regenerate-actions");
     const regenerateButton = document.createElement("button");
     regenerateButton.type = "button";
     regenerateButton.className = "regenerate-button";
@@ -1626,9 +1778,18 @@ function createMessageNode(role, content, options = {}) {
     regenerateButton.textContent = state.regeneratingMessageId === Number(options.messageId) ? "\u6b63\u5728\u6362..." : "\u6362\u4e00\u53e5";
     regenerateButton.addEventListener("click", () => regenerateLastAssistant(options.messageId));
     actions.appendChild(regenerateButton);
-    node.appendChild(actions);
   }
   return node;
+}
+
+function ensureMessageActions(node) {
+  let actions = node.querySelector(".message-actions");
+  if (!actions) {
+    actions = document.createElement("div");
+    actions.className = "message-actions";
+    node.appendChild(actions);
+  }
+  return actions;
 }
 
 function refreshRegenerateButtons() {
@@ -1733,13 +1894,10 @@ async function playSpeech(text, button) {
   try {
     const result = await api("/api/tts", {
       method: "POST",
-      body: JSON.stringify({
-        text,
-        context: {
+      body: JSON.stringify(buildTtsRequestBody(text, {
           replyText: text,
           history: getVisibleChatHistory(20)
-        }
-      })
+        }))
     });
     await playAudioResult(result, button, oldText);
   } catch (error) {
@@ -1928,6 +2086,12 @@ function readAgentForm() {
     visualContext: agentVisualContext.value.trim(),
     voiceGender: agentVoiceGender.value,
     voiceTone: agentVoiceTone.value,
+    voiceSpeed: normalizeVoiceSpeedValue(voiceSpeed.value),
+    voiceVolume: normalizeVoiceVolumeValue(voiceVolume.value),
+    voiceExpressiveness: normalizeRatioValue(voiceExpressiveness.value, 0.6),
+    voiceWarmth: normalizeRatioValue(voiceWarmth.value, 0.7),
+    voiceClarity: normalizeRatioValue(voiceClarity.value, 0.65),
+    autoRead: autoReadToggle.checked,
     clonedVoiceId: state.activeAgent?.clonedVoiceId || "",
     voiceSampleName: state.activeAgent?.voiceSampleName || "",
     referenceImage,
@@ -2163,6 +2327,12 @@ function isSupportedVoiceSample(file) {
 
 function friendlyVoiceCloneError(message) {
   const value = String(message || "");
+  if (value.includes("太大") || value.includes("413")) {
+    return "声音文件太大。请换一段 6 到 9 秒、前后少留空白的 mp3/wav 人声。";
+  }
+  if (value.includes("file_format") || value.includes("unsupported") || value.includes("有效的 mp3/wav")) {
+    return "没有识别到有效的 mp3/wav 音频内容，请重新导出或重录一段清晰人声。";
+  }
   if (value.includes("有效人声时长") || value.includes("duration")) {
     return "有效人声时长不在 5 到 10 秒内。建议录 6 到 9 秒，开头结尾少留空白。";
   }
@@ -2281,6 +2451,76 @@ function normalizeAgentGender(value, voiceGender = "") {
   if (["boy", "male", "deep_male"].includes(voiceGender)) return "male";
   if (["girl", "female", "mature_female"].includes(voiceGender)) return "female";
   return "unspecified";
+}
+
+function normalizeVoiceSpeedValue(value) {
+  if (value === "slow") return 0.85;
+  if (value === "normal") return 1;
+  if (value === "fast") return 1.15;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return roundToStep(Math.min(2, Math.max(0.5, number)), 2);
+}
+
+function normalizeVoiceVolumeValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return roundToStep(Math.min(2, Math.max(0.1, number)), 2);
+}
+
+function normalizeRatioValue(value, fallback = 0.5) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return roundToStep(Math.min(1, Math.max(0, number)), 2);
+}
+
+function roundToStep(value, digits = 2) {
+  return Number(value.toFixed(digits));
+}
+
+function renderVoiceTuningValues() {
+  if (voiceSpeedValue) voiceSpeedValue.textContent = `${normalizeVoiceSpeedValue(voiceSpeed?.value).toFixed(2)}x`;
+  if (voiceVolumeValue) voiceVolumeValue.textContent = `${normalizeVoiceVolumeValue(voiceVolume?.value).toFixed(2)}x`;
+  if (voiceExpressivenessValue) voiceExpressivenessValue.textContent = `${Math.round(normalizeRatioValue(voiceExpressiveness?.value, 0.6) * 100)}%`;
+  if (voiceWarmthValue) voiceWarmthValue.textContent = `${Math.round(normalizeRatioValue(voiceWarmth?.value, 0.7) * 100)}%`;
+  if (voiceClarityValue) voiceClarityValue.textContent = `${Math.round(normalizeRatioValue(voiceClarity?.value, 0.65) * 100)}%`;
+}
+
+function installRangeDrag(input) {
+  if (!input) return;
+  const updateFromPointer = (event) => {
+    const rect = input.getBoundingClientRect();
+    if (!rect.width) return;
+    const min = Number(input.min || 0);
+    const max = Number(input.max || 100);
+    const step = Number(input.step || 1);
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const raw = min + ratio * (max - min);
+    const stepped = Number.isFinite(step) && step > 0
+      ? Math.round((raw - min) / step) * step + min
+      : raw;
+    const next = String(Number(Math.min(max, Math.max(min, stepped)).toFixed(4)));
+    if (input.value !== next) {
+      input.value = next;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  };
+
+  input.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    input.focus();
+    input.setPointerCapture?.(event.pointerId);
+    updateFromPointer(event);
+  });
+  input.addEventListener("pointermove", (event) => {
+    if (event.buttons !== 1 && !input.hasPointerCapture?.(event.pointerId)) return;
+    event.preventDefault();
+    updateFromPointer(event);
+  });
+  input.addEventListener("pointerup", (event) => {
+    input.releasePointerCapture?.(event.pointerId);
+  });
 }
 
 async function api(url, options = {}) {

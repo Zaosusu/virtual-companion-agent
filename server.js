@@ -272,13 +272,18 @@ async function handleApi(req, res, pathname) {
         path: pathname,
         body
       });
-      if (data.token) {
-        store.saveModelConfig({
-          officialBaseUrl: modelConfig.officialBaseUrl,
-          officialModel: modelConfig.officialModel,
-          officialUserToken: data.token
+      const authToken = data.token || data.accessToken || data.access_token || data.userToken || data.user_token || "";
+      if (!authToken) {
+        return sendJson(res, 502, {
+          error: "账号服务没有返回登录凭证，请稍后重试。",
+          code: "missing_auth_token"
         });
       }
+      store.saveModelConfig({
+        officialBaseUrl: modelConfig.officialBaseUrl,
+        officialModel: modelConfig.officialModel,
+        officialUserToken: authToken
+      });
       const nextConfig = getRuntimeConfig().modelConfig;
       return sendJson(res, 200, {
         ok: true,
@@ -372,7 +377,7 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/api/persona-corpus/import") {
     const body = await readBody(req);
-    const text = String(body.text || "").trim();
+    const text = String(body.text || body.input || "").trim();
     if (text.length < 20) return sendJson(res, 400, { error: "请先放入足够的人物语料。" });
     const { agent } = getRuntimeConfig();
     const imported = importPersonaCorpus({
@@ -706,7 +711,7 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "POST" && pathname === "/api/tts") {
     const body = await readBody(req);
-    const text = String(body.text || "").trim();
+    const text = String(body.text || body.input || "").trim();
     if (!text) return sendJson(res, 400, { error: "text is required" });
     const { agent, modelConfig } = getRuntimeConfig();
     if (!usesOfficialGateway(modelConfig) && !SELF_HOSTED_ENABLED) {
@@ -718,7 +723,7 @@ async function handleApi(req, res, pathname) {
         context: body.context,
         agent
       });
-      const audioConfig = audioConfigFromModel(modelConfig, agent, voiceDecision);
+      const audioConfig = applyTtsOverrides(audioConfigFromModel(modelConfig, agent, voiceDecision), body, agent);
       const audio = usesOfficialGateway(modelConfig)
         ? await callOfficialTtsGatewayWithFallback({
           modelConfig,
@@ -729,26 +734,31 @@ async function handleApi(req, res, pathname) {
           text,
           audioConfig
         });
-      store.deleteRecentAssistantTextMessage({ sessionId: agent.id, content: text });
-      const messageId = store.addMessage({
-        sessionId: agent.id,
-        role: "assistant",
-        content: text,
-        workflow: "voice",
-        source: "tool:voice.speech",
-        metadata: {
-          type: "voice",
-          audio: {
-            audioBase64: audio.audioBase64,
-            audioUrl: audio.audioUrl,
-            mimeType: audio.mimeType,
-            format: audio.format
-          },
-          transcript: text,
-          voiceAgent: voiceDecision
-        }
-      });
-      const message = store.getMessage(messageId);
+      const shouldPersistMessage = body.persistMessage !== false;
+      let messageId = null;
+      let message = null;
+      if (shouldPersistMessage) {
+        store.deleteRecentAssistantTextMessage({ sessionId: agent.id, content: text });
+        messageId = store.addMessage({
+          sessionId: agent.id,
+          role: "assistant",
+          content: text,
+          workflow: "voice",
+          source: "tool:voice.speech",
+          metadata: {
+            type: "voice",
+            audio: {
+              audioBase64: audio.audioBase64,
+              audioUrl: audio.audioUrl,
+              mimeType: audio.mimeType,
+              format: audio.format
+            },
+            transcript: text,
+            voiceAgent: voiceDecision
+          }
+        });
+        message = store.getMessage(messageId);
+      }
       sendJson(res, 200, {
         ok: true,
         messageId,
@@ -1467,6 +1477,7 @@ async function callOfficialTtsGateway({ modelConfig, text, audioConfig }) {
       body: JSON.stringify({
         model: audioConfig.model || "stepaudio-2.5-tts",
         text,
+        input: text,
         voice: audioConfig.voice,
         response_format: audioConfig.responseFormat || audioConfig.format || "mp3",
         instruction: audioConfig.instruction,
@@ -1899,6 +1910,71 @@ function audioConfigFromModel(modelConfig, agent = {}, voiceDecision = null) {
   };
 }
 
+function applyTtsOverrides(audioConfig, body = {}, agent = {}) {
+  const voiceTuning = {
+    expressiveness: resolveRatio(body.voiceExpressiveness ?? agent.voiceExpressiveness, 0.6),
+    warmth: resolveRatio(body.voiceWarmth ?? agent.voiceWarmth, 0.7),
+    clarity: resolveRatio(body.voiceClarity ?? agent.voiceClarity, 0.65)
+  };
+  return {
+    ...audioConfig,
+    speed: resolveVoiceSpeed(body.voiceSpeed ?? body.speed ?? agent.voiceSpeed ?? audioConfig.speed),
+    volume: resolveVoiceVolume(body.voiceVolume ?? body.volume ?? agent.voiceVolume ?? audioConfig.volume),
+    instruction: appendVoiceTuningInstruction(audioConfig.instruction, voiceTuning)
+  };
+}
+
+function resolveVoiceSpeed(value) {
+  if (value === "slow") return 0.85;
+  if (value === "normal") return 1;
+  if (value === "fast") return 1.15;
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(2, Math.max(0.5, number)) : undefined;
+}
+
+function resolveVoiceVolume(value) {
+  if (value === undefined || value === null || value === "") return 1;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(2, Math.max(0.1, number)) : 1;
+}
+
+function resolveRatio(value, fallback = 0.5) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(1, Math.max(0, number));
+}
+
+function appendVoiceTuningInstruction(baseInstruction, tuning = {}) {
+  const lines = [
+    voiceTuningLine("情绪表现", tuning.expressiveness, [
+      "克制自然，不要夸张",
+      "有一点情绪起伏",
+      "情绪更明显，贴近文字里的状态"
+    ]),
+    voiceTuningLine("亲近感", tuning.warmth, [
+      "保持礼貌清爽",
+      "自然亲近，像熟人聊天",
+      "更柔和贴近，有陪伴感"
+    ]),
+    voiceTuningLine("清晰度", tuning.clarity, [
+      "更松弛口语，允许轻微停顿",
+      "清楚自然，停顿适中",
+      "吐字更清楚，重点更明确"
+    ])
+  ].filter(Boolean);
+  return [baseInstruction, lines.length ? `声音细调：${lines.join("；")}。` : ""]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 200);
+}
+
+function voiceTuningLine(label, value, levels = []) {
+  const ratio = resolveRatio(value, 0.5);
+  const text = ratio < 0.34 ? levels[0] : ratio > 0.67 ? levels[2] : levels[1];
+  return `${label}${Math.round(ratio * 100)}%，${text}`;
+}
+
 function voicePresetForAgent(agent = {}) {
   if (agent.voiceGender === "girl") return "yuanqishaonv";
   if (agent.voiceGender === "mature_female") return "zhixingjiejie";
@@ -1946,6 +2022,12 @@ function buildVoiceInstruction(baseInstruction, agent = {}, voiceDecision = null
 
 function publicVoiceCloneError(error) {
   const message = String(error?.message || "");
+  if (message.includes("请求体太大") || message.includes("413")) {
+    return "声音克隆失败：声音文件太大，请换一段 6 到 9 秒、前后少留空白的 mp3/wav 人声。";
+  }
+  if (message.includes("file_format") || message.includes("unsupported") || message.includes("invalid or unsupported")) {
+    return "声音克隆失败：服务端没有识别到有效的 mp3/wav 音频内容，请重新导出或重录一段清晰人声。";
+  }
   if (message.includes("只支持 mp3 或 wav")) return message;
   if (message.includes("请先上传")) return message;
   if (message.includes("语音服务还没有配置完整")) return message;

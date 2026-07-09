@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildFtsQuery, cosineSimilarity, embedText, searchableText } from "./rag.js";
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 5;
 
 export class CompanionStore {
   constructor(dbPath) {
@@ -111,6 +111,12 @@ export class CompanionStore {
         system_prompt TEXT NOT NULL DEFAULT '',
         voice_gender TEXT NOT NULL DEFAULT 'female',
         voice_tone TEXT NOT NULL DEFAULT 'warm',
+        auto_read INTEGER NOT NULL DEFAULT 0,
+        voice_speed TEXT NOT NULL DEFAULT '1',
+        voice_volume REAL NOT NULL DEFAULT 1,
+        voice_expressiveness REAL NOT NULL DEFAULT 0.6,
+        voice_warmth REAL NOT NULL DEFAULT 0.7,
+        voice_clarity REAL NOT NULL DEFAULT 0.65,
         cloned_voice_id TEXT NOT NULL DEFAULT '',
         voice_sample_name TEXT NOT NULL DEFAULT '',
         reference_image_data TEXT NOT NULL DEFAULT '',
@@ -223,6 +229,8 @@ export class CompanionStore {
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       if (fromVersion < 3) this.migrateTo3();
+      if (fromVersion < 4) this.migrateTo4();
+      if (fromVersion < 5) this.migrateTo5();
       this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
       this.db.exec("COMMIT;");
       if (backupPath) console.log(`[db] schema migrated ${fromVersion} -> ${CURRENT_SCHEMA_VERSION}; backup: ${backupPath}`);
@@ -302,6 +310,18 @@ export class CompanionStore {
     this.ensureColumn("model_config", "audio_return_url", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("model_config", "audio_timestamp", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("model_config", "audio_extra_body", "TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  migrateTo4() {
+    this.ensureColumn("agents", "auto_read", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("agents", "voice_speed", "TEXT NOT NULL DEFAULT '1'");
+    this.ensureColumn("agents", "voice_volume", "REAL NOT NULL DEFAULT 1");
+  }
+
+  migrateTo5() {
+    this.ensureColumn("agents", "voice_expressiveness", "REAL NOT NULL DEFAULT 0.6");
+    this.ensureColumn("agents", "voice_warmth", "REAL NOT NULL DEFAULT 0.7");
+    this.ensureColumn("agents", "voice_clarity", "REAL NOT NULL DEFAULT 0.65");
   }
 
   ensureIndexes() {
@@ -642,6 +662,12 @@ export class CompanionStore {
         visual_context AS visualContext,
         voice_gender AS voiceGender,
         voice_tone AS voiceTone,
+        auto_read AS autoRead,
+        voice_speed AS voiceSpeed,
+        voice_volume AS voiceVolume,
+        voice_expressiveness AS voiceExpressiveness,
+        voice_warmth AS voiceWarmth,
+        voice_clarity AS voiceClarity,
         cloned_voice_id AS clonedVoiceId,
         voice_sample_name AS voiceSampleName,
         reference_image_data AS referenceImageData,
@@ -676,14 +702,16 @@ export class CompanionStore {
         avatar_image_data, avatar_image_mime, avatar_image_name,
         appearance, voice_style, relationship,
         opening_message, system_prompt, image_style, visual_context,
-        voice_gender, voice_tone, cloned_voice_id, voice_sample_name,
+        voice_gender, voice_tone, auto_read, voice_speed, voice_volume,
+        voice_expressiveness, voice_warmth, voice_clarity,
+        cloned_voice_id, voice_sample_name,
         reference_image_data, reference_image_mime, reference_image_name,
         chat_background_data, chat_background_mime, chat_background_name,
         chat_background_opacity, chat_background_blur,
         boundaries_json, safety_rules_json,
         prompts_json, is_builtin, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         avatar = excluded.avatar,
@@ -703,6 +731,12 @@ export class CompanionStore {
         visual_context = excluded.visual_context,
         voice_gender = excluded.voice_gender,
         voice_tone = excluded.voice_tone,
+        auto_read = excluded.auto_read,
+        voice_speed = excluded.voice_speed,
+        voice_volume = excluded.voice_volume,
+        voice_expressiveness = excluded.voice_expressiveness,
+        voice_warmth = excluded.voice_warmth,
+        voice_clarity = excluded.voice_clarity,
         cloned_voice_id = excluded.cloned_voice_id,
         voice_sample_name = excluded.voice_sample_name,
         reference_image_data = excluded.reference_image_data,
@@ -737,6 +771,12 @@ export class CompanionStore {
       String(agent.visualContext || "").trim(),
       normalizeVoiceGender(agent.voiceGender),
       normalizeVoiceTone(agent.voiceTone),
+      normalizeAutoRead(agent.autoRead),
+      normalizeVoiceSpeed(agent.voiceSpeed),
+      normalizeVoiceVolume(agent.voiceVolume),
+      normalizeRatio(agent.voiceExpressiveness, 0.6),
+      normalizeRatio(agent.voiceWarmth, 0.7),
+      normalizeRatio(agent.voiceClarity, 0.65),
       String(agent.clonedVoiceId || "").trim(),
       String(agent.voiceSampleName || "").trim(),
       agent.clearReferenceImage ? "" : String(agent.referenceImage?.data || agent.referenceImageData || "").trim(),
@@ -1294,6 +1334,12 @@ function deserializeAgent(row) {
     visualContext: row.visualContext || "",
     voiceGender: row.voiceGender || "female",
     voiceTone: row.voiceTone || "warm",
+    autoRead: Boolean(row.autoRead),
+    voiceSpeed: normalizeVoiceSpeed(row.voiceSpeed),
+    voiceVolume: normalizeVoiceVolume(row.voiceVolume),
+    voiceExpressiveness: normalizeRatio(row.voiceExpressiveness, 0.6),
+    voiceWarmth: normalizeRatio(row.voiceWarmth, 0.7),
+    voiceClarity: normalizeRatio(row.voiceClarity, 0.65),
     clonedVoiceId: row.clonedVoiceId || "",
     voiceSampleName: row.voiceSampleName || "",
     referenceImage: row.referenceImageData ? {
@@ -1366,6 +1412,31 @@ function normalizeVoiceGender(value) {
 
 function normalizeVoiceTone(value) {
   return ["warm", "bright", "calm", "energetic", "soft"].includes(value) ? value : "warm";
+}
+
+function normalizeAutoRead(value) {
+  return value === true || value === 1 || value === "1" || value === "true" ? 1 : 0;
+}
+
+function normalizeVoiceSpeed(value) {
+  if (value === "slow") return 0.85;
+  if (value === "normal") return 1;
+  if (value === "fast") return 1.15;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return Number(Math.min(2, Math.max(0.5, number)).toFixed(2));
+}
+
+function normalizeVoiceVolume(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return Number(Math.min(2, Math.max(0.1, number)).toFixed(2));
+}
+
+function normalizeRatio(value, fallback = 0.5) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Number(Math.min(1, Math.max(0, number)).toFixed(2));
 }
 
 function normalizeAudioFormat(value) {

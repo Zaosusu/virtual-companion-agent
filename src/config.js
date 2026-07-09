@@ -160,6 +160,12 @@ export function characterFromAgent(agent) {
       visualContext: agent.visualContext || "",
       voiceGender: agent.voiceGender || "female",
       voiceTone: agent.voiceTone || "warm",
+      autoRead: Boolean(agent.autoRead),
+      voiceSpeed: normalizeVoiceSpeed(agent.voiceSpeed),
+      voiceVolume: normalizeVoiceVolume(agent.voiceVolume),
+      voiceExpressiveness: normalizeRatio(agent.voiceExpressiveness, 0.6),
+      voiceWarmth: normalizeRatio(agent.voiceWarmth, 0.7),
+      voiceClarity: normalizeRatio(agent.voiceClarity, 0.65),
       clonedVoiceId: agent.clonedVoiceId || "",
       voiceSampleName: agent.voiceSampleName || "",
       referenceImage: agent.referenceImage || null,
@@ -204,6 +210,12 @@ export function agentFromImport(value) {
     visualContext: agent.visualContext || "",
     voiceGender: normalizeVoiceGender(agent.voiceGender),
     voiceTone: ["warm", "bright", "calm", "energetic", "soft"].includes(agent.voiceTone) ? agent.voiceTone : "warm",
+    autoRead: Boolean(agent.autoRead),
+    voiceSpeed: normalizeVoiceSpeed(agent.voiceSpeed),
+    voiceVolume: normalizeVoiceVolume(agent.voiceVolume),
+    voiceExpressiveness: normalizeRatio(agent.voiceExpressiveness, 0.6),
+    voiceWarmth: normalizeRatio(agent.voiceWarmth, 0.7),
+    voiceClarity: normalizeRatio(agent.voiceClarity, 0.65),
     clonedVoiceId: agent.clonedVoiceId || "",
     voiceSampleName: agent.voiceSampleName || "",
     referenceImage: agent.referenceImage || null,
@@ -233,6 +245,27 @@ function normalizeVoiceGender(value) {
     "neutral",
     "neutral_calm"
   ].includes(value) ? value : "female";
+}
+
+function normalizeVoiceSpeed(value) {
+  if (value === "slow") return 0.85;
+  if (value === "normal") return 1;
+  if (value === "fast") return 1.15;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return Number(Math.min(2, Math.max(0.5, number)).toFixed(2));
+}
+
+function normalizeVoiceVolume(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return Number(Math.min(2, Math.max(0.1, number)).toFixed(2));
+}
+
+function normalizeRatio(value, fallback = 0.5) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Number(Math.min(1, Math.max(0, number)).toFixed(2));
 }
 
 function normalizeAgentGender(value, voiceGender = "") {

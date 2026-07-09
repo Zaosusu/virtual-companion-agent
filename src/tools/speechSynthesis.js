@@ -12,7 +12,7 @@ export async function synthesizeSpeech({ text, audioConfig, overrides = {} }) {
     input: trimSpeechText(text),
     voice: config.voice,
     response_format: responseFormat,
-    instruction: config.instruction ? String(config.instruction).slice(0, 500) : undefined,
+    instruction: config.instruction ? String(config.instruction).slice(0, 200) : undefined,
     speed: toOptionalNumber(config.speed),
     volume: toOptionalNumber(config.volume),
     sample_rate: toOptionalNumber(config.sampleRate),

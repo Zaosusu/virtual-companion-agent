@@ -63,6 +63,53 @@ test("agent gender is saved independently from voice type", () => {
   });
 });
 
+test("agent voice experience settings are saved with safe defaults", () => {
+  withStore((store) => {
+    const defaults = store.upsertAgent({
+      id: "voice-defaults",
+      name: "Voice Defaults",
+      persona: "A custom role.",
+      isBuiltin: false
+    });
+    assert.equal(defaults.autoRead, false);
+    assert.equal(defaults.voiceSpeed, 1);
+    assert.equal(defaults.voiceVolume, 1);
+    assert.equal(defaults.voiceExpressiveness, 0.6);
+    assert.equal(defaults.voiceWarmth, 0.7);
+    assert.equal(defaults.voiceClarity, 0.65);
+
+    const configured = store.upsertAgent({
+      ...defaults,
+      autoRead: true,
+      voiceSpeed: 1.35,
+      voiceVolume: 1.4,
+      voiceExpressiveness: 0.9,
+      voiceWarmth: 0.8,
+      voiceClarity: 0.55
+    });
+    assert.equal(configured.autoRead, true);
+    assert.equal(configured.voiceSpeed, 1.35);
+    assert.equal(configured.voiceVolume, 1.4);
+    assert.equal(configured.voiceExpressiveness, 0.9);
+    assert.equal(configured.voiceWarmth, 0.8);
+    assert.equal(configured.voiceClarity, 0.55);
+
+    const normalized = store.upsertAgent({
+      ...configured,
+      voiceSpeed: "too-fast",
+      voiceVolume: 0,
+      voiceExpressiveness: 9,
+      voiceWarmth: -1,
+      voiceClarity: "bad"
+    });
+    assert.equal(normalized.voiceSpeed, 1);
+    assert.equal(normalized.voiceVolume, 0.1);
+    assert.equal(normalized.voiceExpressiveness, 1);
+    assert.equal(normalized.voiceWarmth, 0);
+    assert.equal(normalized.voiceClarity, 0.65);
+  });
+});
+
 test("last active assistant can be used when regenerate id is stale", () => {
   withStore((store) => {
     const sessionId = "regen-agent";

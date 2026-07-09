@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>角色智能体工作台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/public/styles.css" />
+    <link rel="stylesheet" href="/public/styles.css?v=20260709-voice-slider-layout" />
   </head>
   <body>
     <button class="edge-toggle edge-left" id="toggleLeftPanel" type="button" aria-label="显示或隐藏角色列表" title="显示或隐藏角色列表">角色</button>
@@ -165,6 +165,37 @@
                 </select>
               </label>
             </div>
+            <div class="voice-tuning-grid">
+              <label class="range-control">
+                <span>&#35821;&#36895;</span>
+                <input id="voiceSpeed" type="range" min="0.5" max="2" step="0.05" />
+                <output id="voiceSpeedValue" class="range-value">1.00x</output>
+              </label>
+              <label class="range-control">
+                <span>&#38899;&#37327;</span>
+                <input id="voiceVolume" type="range" min="0.1" max="2" step="0.05" />
+                <output id="voiceVolumeValue" class="range-value">1.00x</output>
+              </label>
+              <label class="range-control">
+                <span>&#24773;&#32490;&#24863;</span>
+                <input id="voiceExpressiveness" type="range" min="0" max="1" step="0.05" />
+                <output id="voiceExpressivenessValue" class="range-value">60%</output>
+              </label>
+              <label class="range-control">
+                <span>&#20146;&#36817;&#24863;</span>
+                <input id="voiceWarmth" type="range" min="0" max="1" step="0.05" />
+                <output id="voiceWarmthValue" class="range-value">70%</output>
+              </label>
+              <label class="range-control">
+                <span>&#28165;&#26224;&#24230;</span>
+                <input id="voiceClarity" type="range" min="0" max="1" step="0.05" />
+                <output id="voiceClarityValue" class="range-value">65%</output>
+              </label>
+            </div>
+            <label class="toggle-line">
+              <input id="autoReadToggle" type="checkbox" />
+              <span>&#33258;&#21160;&#26391;&#35835; AI &#22238;&#22797;</span>
+            </label>
             <div class="reference-upload chat-background-upload">
               <label>
                 <span>&#32842;&#22825;&#32972;&#26223;&#22270;</span>
@@ -381,6 +412,6 @@
       </article>
     </template>
 
-    <script type="module" src="/public/app.js?v=20260708-realtime-btoa-fix"></script>
+    <script type="module" src="/public/app.js?v=20260709-voice-slider-drag"></script>
   </body>
 </html>
