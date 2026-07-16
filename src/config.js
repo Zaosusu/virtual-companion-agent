@@ -149,8 +149,10 @@ export function characterFromAgent(agent) {
     safety_rules: agent.safetyRules || [],
     runtime_config: {
       openingMessage: agent.openingMessage,
+      openingSuggestions: normalizeTextArray(agent.openingSuggestions, 3, 180),
       systemPrompt: agent.systemPrompt,
       prompts: agent.prompts || [],
+      quickActionsEnabled: Boolean(agent.quickActionsEnabled),
       avatar: agent.avatar,
       avatarImage: agent.avatarImage || null,
       tagline: agent.tagline,
@@ -158,6 +160,8 @@ export function characterFromAgent(agent) {
       imageStyle: agent.imageStyle || "realistic",
       appearance: agent.appearance || "",
       visualContext: agent.visualContext || "",
+      userPersonaEnabled: Boolean(agent.userPersonaEnabled),
+      userPersona: agent.userPersonaEnabled ? String(agent.userPersona || "").trim() : "",
       voiceGender: agent.voiceGender || "female",
       voiceTone: agent.voiceTone || "warm",
       autoRead: Boolean(agent.autoRead),
@@ -174,7 +178,9 @@ export function characterFromAgent(agent) {
       referenceImage: agent.referenceImage || null,
       chatBackground: agent.chatBackground || null,
       chatBackgroundOpacity: agent.chatBackgroundOpacity ?? 0.18,
-      chatBackgroundBlur: agent.chatBackgroundBlur ?? 0
+      chatBackgroundBlur: agent.chatBackgroundBlur ?? 0,
+      chatBackgroundOverlay: agent.chatBackgroundOverlay === true,
+      chatBrandVisible: agent.chatBrandVisible !== false
     }
   };
 }
@@ -207,7 +213,10 @@ export function agentFromImport(value) {
     appearance: agent.appearance || "",
     voiceStyle: agent.voiceStyle || "",
     relationship: agent.relationship || "",
+    userPersonaEnabled: Boolean(agent.userPersonaEnabled),
+    userPersona: String(agent.userPersona || "").trim(),
     openingMessage: agent.openingMessage || "",
+    openingSuggestions: normalizeTextArray(agent.openingSuggestions, 3, 180),
     systemPrompt: agent.systemPrompt || "",
     imageStyle: agent.imageStyle === "anime" ? "anime" : "realistic",
     visualContext: agent.visualContext || "",
@@ -228,9 +237,13 @@ export function agentFromImport(value) {
     chatBackground: agent.chatBackground || null,
     chatBackgroundOpacity: normalizeChatBackgroundOpacity(agent.chatBackgroundOpacity),
     chatBackgroundBlur: normalizeChatBackgroundBlur(agent.chatBackgroundBlur),
+    chatBackgroundOverlay: agent.chatBackgroundOverlay === true,
+    chatBrandVisible: agent.chatBrandVisible !== false,
     boundaries: Array.isArray(agent.boundaries) ? agent.boundaries : [],
     safetyRules: Array.isArray(agent.safetyRules) ? agent.safetyRules : [],
     prompts: Array.isArray(agent.prompts) ? agent.prompts : [],
+    quickActionsEnabled: Boolean(agent.quickActionsEnabled),
+    dialogueState: parseJsonObject(agent.dialogueState),
     isBuiltin: false
   };
 }
@@ -282,8 +295,17 @@ function normalizeResponseStyle(value) {
     "dream",
     "lover",
     "reserved",
-    "story"
+    "story",
+    "immersive",
+    "history"
   ].includes(style) ? style : "balanced";
+}
+
+function normalizeTextArray(value, limit = 3, itemLimit = 180) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => String(item || "").trim().slice(0, itemLimit))
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function normalizeAgentGender(value, voiceGender = "") {

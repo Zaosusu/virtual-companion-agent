@@ -1,6 +1,9 @@
 ﻿import { buildAgentModelRequest, buildResponseProfile } from "./modelPolicy.js";
 
 import { detectModalityIntent } from "./orchestrator/modalityIntent.js";
+import { formatTemporalContextInstruction } from "./orchestrator/temporalContext.js";
+import { formatSceneConstraintInstruction } from "./orchestrator/sceneConstraints.js";
+import { formatStoryDirectiveInstruction } from "./orchestrator/storyDirectorAgent.js";
 
 export { buildResponseProfile } from "./modelPolicy.js";
 
@@ -29,9 +32,9 @@ const workflowMap = [
   { workflow: "daily_checkin", re: /早安|晚安|打卡|签到|陪我|在吗/ }
 ];
 
-export async function createCompanionReply({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history, llm, traceId = "", turnContext = {} }) {
+export async function createCompanionReply({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history, llm, traceId = "", turnContext = {}, temporalContext = null, sceneConstraints = null, storyDirective = null, userImage = null }) {
   const safety = detectSafety(message);
-  const capability = detectCapabilityRequest(message);
+  const capability = userImage ? { type: "vision_input", requested: true } : detectCapabilityRequest(message);
 
   if (capability.type === "image_output" && !llm?.imageOutputAvailable) {
     return {
@@ -73,13 +76,14 @@ export async function createCompanionReply({ character, memory, retrievedMemorie
 
   if (llm?.apiKey && llm?.baseUrl && llm?.model) {
     try {
-      const result = await callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId, turnContext });
+      const result = await callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId, turnContext, temporalContext, sceneConstraints, storyDirective, userImage });
       return {
         text: result.text,
         mood: detectMood(message),
         workflow: detectWorkflow(message),
         source: llm.mode === "cloud_license" ? "cloud_license" : llm.mode === "free_quota" ? "cloud_license" : "llm",
         safety,
+        capability,
         responseProfile: result.responseProfile,
         retrievedMemories
       };
@@ -418,7 +422,7 @@ function formatResponseProfileInstruction(profile = {}) {
   ].filter(Boolean).join("\n");
 }
 
-async function callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId = "", turnContext = {} }) {
+async function callRemoteModel({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, traceId = "", turnContext = {}, temporalContext = null, sceneConstraints = null, storyDirective = null, userImage = null }) {
   const workflow = detectWorkflow(message);
   const mood = detectMood(message);
   const responseProfile = buildResponseProfile({
@@ -432,7 +436,7 @@ async function callRemoteModel({ character, memory, retrievedMemories, retrieval
     mood,
     turnContext
   });
-  const messages = buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, responseProfile });
+  const messages = buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, responseProfile, temporalContext, sceneConstraints, storyDirective, userImage });
   const startedAt = Date.now();
   logTrace(traceId, "text_agent.request", {
     mode: llm.mode,
@@ -469,9 +473,12 @@ async function callRemoteModel({ character, memory, retrievedMemories, retrieval
   return { text, responseProfile };
 }
 
-function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, responseProfile }) {
+function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPlan, contextPlan, message, history, llm, safety, responseProfile, temporalContext = null, sceneConstraints = null, storyDirective = null, userImage = null }) {
   const userSystemPrompt = String(character.runtime_config?.systemPrompt || "").trim();
   const userPersona = String(character.persona || "").trim();
+  const chatPartnerPersona = character.runtime_config?.userPersonaEnabled
+    ? String(character.runtime_config?.userPersona || "").trim()
+    : "";
   const userVoiceStyle = String(character.voice?.style || "").trim();
   const userGender = characterGenderLabel(character);
   const userBoundaries = (character.boundaries || []).filter(Boolean);
@@ -482,6 +489,7 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
       `【用户填写的系统提示词】\n${userSystemPrompt}`,
       userGender ? `【角色性别/性别表达】\n${userGender}` : "",
       userPersona ? `【用户填写的人设】\n${userPersona}` : "",
+      chatPartnerPersona ? `【当前聊天对象的身份设定，不属于角色经历】\n${chatPartnerPersona}` : "",
       userVoiceStyle ? `【用户填写的说话风格】\n${userVoiceStyle}` : "",
       userBoundaries.length ? `【用户填写的边界】\n${userBoundaries.join("；")}` : "",
       userSafetyRules.length ? `【用户填写的安全规则】\n${userSafetyRules.join("；")}` : ""
@@ -490,6 +498,7 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
       `你正在以「${character.name}」的第一人称与用户对话。`,
       userGender ? `角色性别/性别表达：${userGender}` : "",
       userPersona ? `角色定位：${userPersona}` : "角色定位：稳定、自然、有边界地陪用户聊天。",
+      chatPartnerPersona ? `当前聊天对象资料（只能用于理解和称呼“你”，不得改写成角色自己的经历）：${chatPartnerPersona}` : "",
       `说话风格：${userVoiceStyle || "温柔、清醒、具体"}`,
       userBoundaries.length ? `边界：${userBoundaries.join("；")}` : "",
       userSafetyRules.length ? `安全规则：${userSafetyRules.join("；")}` : ""
@@ -502,6 +511,10 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
     "只有当用户要求现实身份验证、现实线下行动、金钱交易、法律承诺、医疗建议，或要求证明现实身份时，才温和说明边界。",
     "如果用户正在用逝去亲人的资料做角色，要温柔承接怀念和哀伤，但避免制造依赖或替代现实哀悼支持。",
     "人物资料库必须先经过 context_agent 的身份归属判断再使用。不要自行把 blockedFacts 恢复成事实。",
+    temporalContext ? formatTemporalContextInstruction(temporalContext) : "",
+    sceneConstraints ? formatSceneConstraintInstruction(sceneConstraints) : "",
+    storyDirective ? formatStoryDirectiveInstruction(storyDirective) : "",
+    formatMemoryCapsule(memory),
     formatResponseProfileInstruction(responseProfile),
     formatEvidenceInstruction(retrievalPlan),
     formatAllowedEvidence(retrievedMemories, retrievalPlan),
@@ -513,7 +526,17 @@ function buildRemoteMessages({ character, memory, retrievedMemories, retrievalPl
   return [
     { role: "system", content: system },
     ...formatHistoryForRemote(history, retrievalPlan),
-    { role: "user", content: message }
+    { role: "user", content: userImage ? multimodalUserContent(message, userImage) : message }
+  ];
+}
+
+function multimodalUserContent(message, image) {
+  const data = String(image?.data || "").trim();
+  const mime = String(image?.mime || "image/png");
+  if (!data) return message;
+  return [
+    { type: "text", text: String(message || "请识别并回应这张图片。") },
+    { type: "image_url", image_url: { url: `data:${mime};base64,${data}` } }
   ];
 }
 
@@ -556,6 +579,16 @@ function formatAllowedEvidence(retrievedMemories = [], retrievalPlan = null) {
   return [
     "CRAG允许证据如下。回答具体事实时只能引用这些证据；未出现在这里的时间、地点、项目名、金额、名次、人物评价、数据，一律视为未知，不得补全。",
     ...evidence
+  ].join("\n");
+}
+
+function formatMemoryCapsule(memory = {}) {
+  const capsule = String(memory.memory_capsule?.[0]?.text || "").trim();
+  if (!capsule) return "";
+  return [
+    "【用户确认的记忆胶囊】",
+    capsule.slice(0, 6000),
+    "使用规则：这是用户主动维护的长期连续性资料。按文本中角色/用户的明确归属使用；不得把用户经历说成角色经历，也不得把角色经历说成当前用户经历。"
   ].join("\n");
 }
 

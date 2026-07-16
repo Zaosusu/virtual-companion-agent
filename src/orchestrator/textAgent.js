@@ -1,6 +1,6 @@
 import { createCompanionReply } from "../agent.js";
 
-export async function runTextAgent({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history = [], llm, traceId = "", turnContext = {} }) {
+export async function runTextAgent({ character, memory, retrievedMemories = [], retrievalPlan = null, contextPlan = null, message, history = [], llm, traceId = "", turnContext = {}, temporalContext = null, sceneConstraints = null, storyDirective = null, userImage = null }) {
   const reply = await createCompanionReply({
     character,
     memory,
@@ -11,7 +11,11 @@ export async function runTextAgent({ character, memory, retrievedMemories = [], 
     history,
     llm,
     traceId,
-    turnContext
+    turnContext,
+    temporalContext,
+    sceneConstraints,
+    storyDirective,
+    userImage
   });
 
   return {

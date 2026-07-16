@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildFtsQuery, cosineSimilarity, embedText, searchableText } from "./rag.js";
 
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 8;
 
 export class CompanionStore {
   constructor(dbPath) {
@@ -84,7 +84,10 @@ export class CompanionStore {
         persona TEXT NOT NULL DEFAULT '',
         voice_style TEXT NOT NULL DEFAULT '',
         relationship TEXT NOT NULL DEFAULT '',
+        user_persona_enabled INTEGER NOT NULL DEFAULT 0,
+        user_persona TEXT NOT NULL DEFAULT '',
         opening_message TEXT NOT NULL DEFAULT '',
+        opening_suggestions_json TEXT NOT NULL DEFAULT '[]',
         system_prompt TEXT NOT NULL DEFAULT '',
         image_style TEXT NOT NULL DEFAULT 'realistic',
         visual_context TEXT NOT NULL DEFAULT '',
@@ -130,9 +133,13 @@ export class CompanionStore {
         chat_background_name TEXT NOT NULL DEFAULT '',
         chat_background_opacity REAL NOT NULL DEFAULT 0.18,
         chat_background_blur INTEGER NOT NULL DEFAULT 0,
+        chat_background_overlay INTEGER NOT NULL DEFAULT 0,
+        chat_brand_visible INTEGER NOT NULL DEFAULT 1,
         boundaries_json TEXT NOT NULL DEFAULT '[]',
         safety_rules_json TEXT NOT NULL DEFAULT '[]',
         prompts_json TEXT NOT NULL DEFAULT '[]',
+        quick_actions_enabled INTEGER NOT NULL DEFAULT 0,
+        dialogue_state_json TEXT NOT NULL DEFAULT '{}',
         is_builtin INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -236,6 +243,7 @@ export class CompanionStore {
       if (fromVersion < 5) this.migrateTo5();
       if (fromVersion < 6) this.migrateTo6();
       if (fromVersion < 7) this.migrateTo7();
+      if (fromVersion < 8) this.migrateTo8();
       this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
       this.db.exec("COMMIT;");
       if (backupPath) console.log(`[db] schema migrated ${fromVersion} -> ${CURRENT_SCHEMA_VERSION}; backup: ${backupPath}`);
@@ -336,6 +344,16 @@ export class CompanionStore {
 
   migrateTo7() {
     this.ensureColumn("agents", "reply_length", "REAL NOT NULL DEFAULT 0.35");
+  }
+
+  migrateTo8() {
+    this.ensureColumn("agents", "user_persona_enabled", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("agents", "user_persona", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("agents", "opening_suggestions_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("agents", "quick_actions_enabled", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("agents", "chat_background_overlay", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("agents", "chat_brand_visible", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("agents", "dialogue_state_json", "TEXT NOT NULL DEFAULT '{}'");
   }
 
   ensureIndexes() {
@@ -670,7 +688,10 @@ export class CompanionStore {
         appearance,
         voice_style AS voiceStyle,
         relationship,
+        user_persona_enabled AS userPersonaEnabled,
+        user_persona AS userPersona,
         opening_message AS openingMessage,
+        opening_suggestions_json AS openingSuggestionsJson,
         system_prompt AS systemPrompt,
         image_style AS imageStyle,
         visual_context AS visualContext,
@@ -695,9 +716,13 @@ export class CompanionStore {
         chat_background_name AS chatBackgroundName,
         chat_background_opacity AS chatBackgroundOpacity,
         chat_background_blur AS chatBackgroundBlur,
+        chat_background_overlay AS chatBackgroundOverlay,
+        chat_brand_visible AS chatBrandVisible,
         boundaries_json AS boundariesJson,
         safety_rules_json AS safetyRulesJson,
         prompts_json AS promptsJson,
+        quick_actions_enabled AS quickActionsEnabled,
+        dialogue_state_json AS dialogueStateJson,
         is_builtin AS isBuiltin,
         created_at AS createdAt,
         updated_at AS updatedAt
@@ -717,19 +742,19 @@ export class CompanionStore {
       INSERT INTO agents (
         id, name, avatar, category, tagline, persona, gender,
         avatar_image_data, avatar_image_mime, avatar_image_name,
-        appearance, voice_style, relationship,
-        opening_message, system_prompt, image_style, visual_context,
+        appearance, voice_style, relationship, user_persona_enabled, user_persona,
+        opening_message, opening_suggestions_json, system_prompt, image_style, visual_context,
         voice_gender, voice_tone, auto_read, voice_speed, voice_volume,
         voice_expressiveness, voice_warmth, voice_clarity,
         response_style, creativity_level, reply_length,
         cloned_voice_id, voice_sample_name,
         reference_image_data, reference_image_mime, reference_image_name,
         chat_background_data, chat_background_mime, chat_background_name,
-        chat_background_opacity, chat_background_blur,
+        chat_background_opacity, chat_background_blur, chat_background_overlay, chat_brand_visible,
         boundaries_json, safety_rules_json,
-        prompts_json, is_builtin, updated_at
+        prompts_json, quick_actions_enabled, dialogue_state_json, is_builtin, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         avatar = excluded.avatar,
@@ -743,7 +768,10 @@ export class CompanionStore {
         appearance = excluded.appearance,
         voice_style = excluded.voice_style,
         relationship = excluded.relationship,
+        user_persona_enabled = excluded.user_persona_enabled,
+        user_persona = excluded.user_persona,
         opening_message = excluded.opening_message,
+        opening_suggestions_json = excluded.opening_suggestions_json,
         system_prompt = excluded.system_prompt,
         image_style = excluded.image_style,
         visual_context = excluded.visual_context,
@@ -768,9 +796,13 @@ export class CompanionStore {
         chat_background_name = excluded.chat_background_name,
         chat_background_opacity = excluded.chat_background_opacity,
         chat_background_blur = excluded.chat_background_blur,
+        chat_background_overlay = excluded.chat_background_overlay,
+        chat_brand_visible = excluded.chat_brand_visible,
         boundaries_json = excluded.boundaries_json,
         safety_rules_json = excluded.safety_rules_json,
         prompts_json = excluded.prompts_json,
+        quick_actions_enabled = excluded.quick_actions_enabled,
+        dialogue_state_json = excluded.dialogue_state_json,
         updated_at = CURRENT_TIMESTAMP
     `).run(
       id,
@@ -786,7 +818,10 @@ export class CompanionStore {
       String(agent.appearance || "").trim(),
       String(agent.voiceStyle || "").trim(),
       String(agent.relationship || "").trim(),
+      normalizeBoolean(agent.userPersonaEnabled),
+      String(agent.userPersona || "").trim(),
       String(agent.openingMessage || "").trim(),
+      JSON.stringify(normalizeTextArray(agent.openingSuggestions, 3, 180)),
       String(agent.systemPrompt || "").trim(),
       normalizeImageStyle(agent.imageStyle),
       String(agent.visualContext || "").trim(),
@@ -811,9 +846,13 @@ export class CompanionStore {
       agent.clearChatBackground ? "" : String(agent.chatBackground?.name || agent.chatBackgroundName || "").trim(),
       normalizeChatBackgroundOpacity(agent.chatBackgroundOpacity),
       normalizeChatBackgroundBlur(agent.chatBackgroundBlur),
+      normalizeBoolean(agent.chatBackgroundOverlay),
+      agent.chatBrandVisible === false ? 0 : 1,
       JSON.stringify(toLines(agent.boundaries)),
       JSON.stringify(toLines(agent.safetyRules)),
       JSON.stringify(Array.isArray(agent.prompts) ? agent.prompts : []),
+      normalizeBoolean(agent.quickActionsEnabled),
+      normalizeJsonObject(agent.dialogueState),
       agent.isBuiltin ? 1 : 0
     );
     return this.getAgent(id);
@@ -843,6 +882,15 @@ export class CompanionStore {
       this.setMeta("active_agent_id", next.id);
     }
     return true;
+  }
+
+  saveAgentDialogueState(id, dialogueState = {}) {
+    this.db.prepare(`
+      UPDATE agents
+      SET dialogue_state_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(normalizeJsonObject(dialogueState), id);
+    return this.getAgent(id);
   }
 
   addMessage({
@@ -897,6 +945,38 @@ export class CompanionStore {
       LIMIT 1
     `).get(Number(id));
     return row ? messageFromRow(row) : null;
+  }
+
+  getMessageByRequestId({ sessionId = "default", requestId, role = "" }) {
+    const cleanRequestId = String(requestId || "").trim();
+    if (!cleanRequestId) return null;
+    const row = this.db.prepare(`
+      SELECT
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM messages
+      WHERE session_id = ? AND status = 'active'
+        AND json_extract(metadata_json, '$.requestId') = ?
+        AND (? = '' OR role = ?)
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(sessionId, cleanRequestId, role, role);
+    return row ? messageFromRow(row) : null;
+  }
+
+  patchMessageMetadata(id, patch = {}) {
+    const message = this.getMessage(id);
+    if (!message) return null;
+    const metadata = { ...(message.metadata || {}), ...(patch || {}) };
+    this.db.prepare(`
+      UPDATE messages
+      SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify(metadata), Number(id));
+    return this.getMessage(id);
   }
 
   getRecentMessages(sessionId = "default", limit = 16) {
@@ -976,6 +1056,55 @@ export class CompanionStore {
       LIMIT 1
     `).get(sessionId);
     return row ? messageFromRow(row) : null;
+  }
+
+  getLastActiveUserMessage(sessionId = "default") {
+    const row = this.db.prepare(`
+      SELECT
+        id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+        variant_group_id AS variantGroupId, variant_index AS variantIndex,
+        replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+        source, metadata_json AS metadataJson, created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM messages
+      WHERE session_id = ? AND role = 'user' AND status = 'active'
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(sessionId);
+    return row ? messageFromRow(row) : null;
+  }
+
+  editLastUserMessage({ sessionId = "default", id, content }) {
+    const clean = String(content || "").trim();
+    if (!clean) throw new Error("Edited message cannot be empty");
+    return this.runInTransaction(() => {
+      const target = this.getMessage(id);
+      const lastUser = this.getLastActiveUserMessage(sessionId);
+      if (!target || target.sessionId !== sessionId || target.role !== "user" || target.status !== "active") {
+        throw new Error("No active user message to edit");
+      }
+      if (!lastUser || Number(lastUser.id) !== Number(target.id)) {
+        throw new Error("Only the last user message can be edited");
+      }
+      const revisions = Array.isArray(target.metadata?.revisions) ? target.metadata.revisions.slice(-4) : [];
+      const metadata = {
+        ...(target.metadata || {}),
+        editedAt: new Date().toISOString(),
+        revisions: [...revisions, { content: target.content, editedAt: new Date().toISOString() }]
+      };
+      this.db.prepare(`
+        UPDATE messages
+        SET content = ?, compressed_at = NULL, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND session_id = ? AND role = 'user' AND status = 'active'
+      `).run(clean, JSON.stringify(metadata), Number(id), sessionId);
+      this.db.prepare(`
+        UPDATE messages
+        SET status = 'replaced', updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = ? AND parent_id = ? AND role = 'assistant' AND status = 'active'
+      `).run(sessionId, Number(id));
+      this.db.prepare("DELETE FROM memories WHERE source_message_id = ?").run(Number(id));
+      return this.getMessage(id);
+    });
   }
 
   getActiveMessagesBefore({ sessionId = "default", beforeId, limit = 20 }) {
@@ -1078,6 +1207,103 @@ export class CompanionStore {
 
     this.addMemoryChunk({ memoryId: id, content: clean });
     return id;
+  }
+
+  saveMemoryCapsule({ agentId, content }) {
+    const cleanAgentId = String(agentId || "").trim();
+    const clean = String(content || "").trim().slice(0, 6000);
+    return this.runInTransaction(() => {
+      const existing = this.db.prepare(`
+        SELECT id FROM memories
+        WHERE kind = 'memory_capsule' AND status = 'active'
+          AND json_extract(metadata_json, '$.agentId') = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).get(cleanAgentId);
+      if (!clean) {
+        if (existing) this.db.prepare("UPDATE memories SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(existing.id);
+        return null;
+      }
+      if (existing) {
+        this.db.prepare(`
+          UPDATE memories
+          SET content = ?, importance = 1, confidence = 1, pinned = 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(clean, existing.id);
+        this.db.prepare("DELETE FROM memory_chunks WHERE memory_id = ?").run(existing.id);
+        this.db.prepare("DELETE FROM memory_chunks_fts WHERE memory_id = ?").run(existing.id);
+        this.addMemoryChunk({ memoryId: existing.id, content: clean });
+        return existing.id;
+      }
+      const id = `memory_capsule_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      this.db.prepare(`
+        INSERT INTO memories (id, kind, content, importance, confidence, pinned, metadata_json)
+        VALUES (?, 'memory_capsule', ?, 1, 1, 1, ?)
+      `).run(id, clean, JSON.stringify({ agentId: cleanAgentId, memoryCapsule: true, explicit: true }));
+      this.addMemoryChunk({ memoryId: id, content: clean });
+      return id;
+    });
+  }
+
+  updateMemory({ id, agentId, content, importance, confirmed, pinned }) {
+    const memoryId = String(id || "").trim();
+    const cleanAgentId = String(agentId || "").trim();
+    const row = this.db.prepare(`
+      SELECT id, kind, content, importance, confidence, pinned, status, metadata_json AS metadataJson
+      FROM memories
+      WHERE id = ? AND status = 'active'
+    `).get(memoryId);
+    if (!row || !memoryBelongsToAgent(row, cleanAgentId)) return null;
+
+    const metadata = safeJson(row.metadataJson, {});
+    if (typeof confirmed === "boolean") metadata.confirmed = confirmed;
+    const nextContent = content === undefined ? row.content : String(content || "").trim().slice(0, 12_000);
+    if (!nextContent) return null;
+    const nextImportance = importance === undefined
+      ? Number(row.importance || 0.5)
+      : Math.min(1, Math.max(0.2, Number(importance) || 0.5));
+    const nextPinned = pinned === undefined ? Boolean(row.pinned) : Boolean(pinned);
+
+    return this.runInTransaction(() => {
+      this.db.prepare(`
+        UPDATE memories
+        SET content = ?, importance = ?, pinned = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(nextContent, nextImportance, nextPinned ? 1 : 0, JSON.stringify(metadata), memoryId);
+      if (nextContent !== row.content) {
+        this.db.prepare("DELETE FROM memory_chunks WHERE memory_id = ?").run(memoryId);
+        this.db.prepare("DELETE FROM memory_chunks_fts WHERE memory_id = ?").run(memoryId);
+        this.addMemoryChunk({ memoryId, content: nextContent });
+      }
+      return this.getMemory(memoryId);
+    });
+  }
+
+  deleteMemory({ id, agentId }) {
+    const memoryId = String(id || "").trim();
+    const cleanAgentId = String(agentId || "").trim();
+    const row = this.db.prepare(`
+      SELECT id, metadata_json AS metadataJson
+      FROM memories
+      WHERE id = ? AND status = 'active'
+    `).get(memoryId);
+    if (!row || !memoryBelongsToAgent(row, cleanAgentId)) return false;
+    return this.runInTransaction(() => {
+      this.db.prepare("UPDATE memories SET status = 'deleted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(memoryId);
+      this.db.prepare("DELETE FROM memory_chunks WHERE memory_id = ?").run(memoryId);
+      this.db.prepare("DELETE FROM memory_chunks_fts WHERE memory_id = ?").run(memoryId);
+      return true;
+    });
+  }
+
+  getMemory(id) {
+    const row = this.db.prepare(`
+      SELECT id, kind, content AS text, importance, confidence, pinned,
+             metadata_json AS metadataJson, updated_at AS at
+      FROM memories
+      WHERE id = ? AND status = 'active'
+    `).get(String(id || "").trim());
+    return row ? publicMemory(row) : null;
   }
 
   addMemoryChunk({ memoryId, content }) {
@@ -1247,7 +1473,7 @@ export class CompanionStore {
     const profile = this.getProfile();
     const agentFilter = String(agentId || "").trim();
     const rows = this.db.prepare(`
-      SELECT id, kind, content AS text, importance, confidence, metadata_json AS metadataJson, updated_at AS at
+      SELECT id, kind, content AS text, importance, confidence, pinned, metadata_json AS metadataJson, updated_at AS at
       FROM memories
       WHERE status = 'active'
         AND (? = '' OR json_extract(metadata_json, '$.agentId') = ? OR json_extract(metadata_json, '$.sessionId') = ?)
@@ -1258,7 +1484,7 @@ export class CompanionStore {
     const byKind = (kind) => rows
       .filter((row) => row.kind === kind)
       .slice(0, perKind)
-      .map(({ id, text, importance, confidence, at }) => ({ id, text, importance, confidence, at }));
+      .map(publicMemory);
 
     return {
       profile,
@@ -1269,6 +1495,7 @@ export class CompanionStore {
       persona_values: byKind("persona_value"),
       persona_catchphrases: byKind("persona_catchphrase"),
       persona_corpus: byKind("persona_corpus"),
+      memory_capsule: byKind("memory_capsule"),
       recent_summaries: this.getRecentSummaries({ agentId }),
       safety_notes: byKind("safety_note"),
       updated_at: new Date().toISOString()
@@ -1285,6 +1512,111 @@ export class CompanionStore {
       ORDER BY updated_at DESC
       LIMIT ?
     `).all(agentFilter, agentFilter, agentFilter, limit);
+  }
+
+  exportUserBackup() {
+    const messages = this.db.prepare(`
+      SELECT id, session_id AS sessionId, role, content, status, parent_id AS parentId,
+             variant_group_id AS variantGroupId, variant_index AS variantIndex,
+             replaced_by AS replacedBy, mood, workflow, safety_level AS safetyLevel,
+             source, metadata_json AS metadataJson, compressed_at AS compressedAt,
+             created_at AS createdAt, updated_at AS updatedAt
+      FROM messages
+      ORDER BY id ASC
+    `).all().map(messageFromRow);
+    const memories = this.db.prepare(`
+      SELECT id, kind, content, importance, confidence, status, pinned,
+             source_message_id AS sourceMessageId, metadata_json AS metadataJson,
+             created_at AS createdAt, updated_at AS updatedAt,
+             last_accessed_at AS lastAccessedAt, access_count AS accessCount
+      FROM memories
+      ORDER BY created_at ASC, id ASC
+    `).all().map(({ metadataJson, ...row }) => ({ ...row, metadata: safeJson(metadataJson, {}) }));
+    const profile = this.db.prepare("SELECT key, value, updated_at AS updatedAt FROM profile ORDER BY key").all();
+    return {
+      format: "2link-desktop-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      activeAgentId: this.getActiveAgentId(),
+      agents: this.getAgents().map((agent) => this.getAgent(agent.id)).filter(Boolean),
+      messages,
+      memories,
+      profile
+    };
+  }
+
+  importUserBackup(backup = {}) {
+    validateUserBackup(backup);
+    return this.runInTransaction(() => {
+      this.db.exec(`
+        DELETE FROM memory_chunks_fts;
+        DELETE FROM memory_chunks;
+        DELETE FROM memories;
+        DELETE FROM messages;
+        DELETE FROM agents;
+        DELETE FROM profile;
+        DELETE FROM meta WHERE key LIKE 'chat_request:%';
+      `);
+
+      for (const agent of backup.agents) this.upsertAgent({ ...agent, isBuiltin: Boolean(agent.isBuiltin) });
+      const insertMessage = this.db.prepare(`
+        INSERT INTO messages (
+          id, session_id, role, content, status, parent_id, variant_group_id, variant_index,
+          replaced_by, mood, workflow, safety_level, source, metadata_json,
+          compressed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const message of [...backup.messages].sort((left, right) => Number(left.id) - Number(right.id))) {
+        insertMessage.run(
+          Number(message.id), String(message.sessionId || "default"), String(message.role || "user"),
+          String(message.content || ""), normalizeMessageStatus(message.status), nullableNumber(message.parentId),
+          String(message.variantGroupId || ""), Number(message.variantIndex || 0), nullableNumber(message.replacedBy),
+          message.mood || null, message.workflow || null, message.safetyLevel || null, message.source || null,
+          JSON.stringify(message.metadata || {}), message.compressedAt || null,
+          message.createdAt || new Date().toISOString(), message.updatedAt || message.createdAt || new Date().toISOString()
+        );
+      }
+
+      const insertMemory = this.db.prepare(`
+        INSERT INTO memories (
+          id, kind, content, importance, confidence, status, pinned, source_message_id,
+          metadata_json, created_at, updated_at, last_accessed_at, access_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const memory of backup.memories) {
+        const content = String(memory.content || "").trim();
+        if (!content) continue;
+        insertMemory.run(
+          String(memory.id), String(memory.kind || "fact"), content,
+          Math.min(1, Math.max(0, Number(memory.importance ?? 0.5))),
+          Math.min(1, Math.max(0, Number(memory.confidence ?? 0.7))),
+          ["active", "deleted", "archived"].includes(memory.status) ? memory.status : "active",
+          memory.pinned ? 1 : 0, nullableNumber(memory.sourceMessageId),
+          JSON.stringify(memory.metadata || {}), memory.createdAt || new Date().toISOString(),
+          memory.updatedAt || memory.createdAt || new Date().toISOString(), memory.lastAccessedAt || null,
+          Math.max(0, Number(memory.accessCount || 0))
+        );
+        if ((memory.status || "active") === "active") this.addMemoryChunk({ memoryId: String(memory.id), content });
+      }
+
+      const insertProfile = this.db.prepare("INSERT INTO profile (key, value, updated_at) VALUES (?, ?, ?)");
+      for (const item of backup.profile || []) {
+        const key = String(item.key || "").trim();
+        if (key) insertProfile.run(key, String(item.value || ""), item.updatedAt || new Date().toISOString());
+      }
+      this.setProfileDefault("timezone", "Asia/Shanghai");
+      this.setProfileDefault("language", "zh-CN");
+      this.setProfileDefault("name", "");
+      const activeAgent = this.getAgent(backup.activeAgentId) || this.getAgent("mori") || this.getAgents()[0];
+      if (!activeAgent) throw new Error("备份中没有可恢复的角色。");
+      this.setMeta("active_agent_id", activeAgent.id);
+      return {
+        agents: backup.agents.length,
+        messages: backup.messages.length,
+        memories: backup.memories.length,
+        activeAgentId: activeAgent.id
+      };
+    });
   }
 
   resetUserData() {
@@ -1320,6 +1652,72 @@ function safeJson(value, fallback) {
   }
 }
 
+function memoryBelongsToAgent(row, agentId) {
+  if (!agentId) return false;
+  const metadata = safeJson(row?.metadataJson, {});
+  return metadata.agentId === agentId || metadata.sessionId === agentId;
+}
+
+function publicMemory(row) {
+  const metadata = safeJson(row?.metadataJson, {});
+  return {
+    id: row.id,
+    kind: row.kind,
+    text: row.text,
+    importance: Number(row.importance || 0.5),
+    confidence: Number(row.confidence || 0.7),
+    pinned: Boolean(row.pinned),
+    confirmed: Boolean(metadata.confirmed || metadata.explicit),
+    sourceName: metadata.sourceName || "",
+    relation: metadata.relation || "",
+    at: row.at
+  };
+}
+
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function validateUserBackup(backup) {
+  if (!backup || backup.format !== "2link-desktop-backup" || Number(backup.version) !== 1) {
+    throw new Error("备份格式不正确，请选择由电脑客户端导出的完整备份。");
+  }
+  if (!Array.isArray(backup.agents) || !backup.agents.length || backup.agents.length > 500) {
+    throw new Error("备份中的角色数据无效。");
+  }
+  if (!Array.isArray(backup.messages) || backup.messages.length > 500_000) {
+    throw new Error("备份中的聊天记录无效或数量过多。");
+  }
+  if (!Array.isArray(backup.memories) || backup.memories.length > 200_000) {
+    throw new Error("备份中的记忆数据无效或数量过多。");
+  }
+  if (backup.profile !== undefined && !Array.isArray(backup.profile)) {
+    throw new Error("备份中的用户资料无效。");
+  }
+  const agentIds = new Set();
+  for (const agent of backup.agents) {
+    const id = String(agent?.id || "").trim();
+    if (!id || agentIds.has(id)) throw new Error("备份中存在无效或重复的角色 ID。");
+    agentIds.add(id);
+  }
+  const messageIds = new Set();
+  for (const message of backup.messages) {
+    const id = Number(message?.id);
+    if (!Number.isInteger(id) || id <= 0 || messageIds.has(id) || !["user", "assistant", "system"].includes(message.role)) {
+      throw new Error("备份中存在无效或重复的聊天记录。");
+    }
+    messageIds.add(id);
+  }
+  const memoryIds = new Set();
+  for (const memory of backup.memories) {
+    const id = String(memory?.id || "").trim();
+    if (!id || memoryIds.has(id)) throw new Error("备份中存在无效或重复的记忆。");
+    memoryIds.add(id);
+  }
+}
+
 function toLines(value) {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
   return String(value || "")
@@ -1352,7 +1750,10 @@ function deserializeAgent(row) {
     appearance: row.appearance || "",
     voiceStyle: row.voiceStyle,
     relationship: row.relationship,
+    userPersonaEnabled: Boolean(row.userPersonaEnabled),
+    userPersona: row.userPersona || "",
     openingMessage: row.openingMessage,
+    openingSuggestions: normalizeTextArray(safeJson(row.openingSuggestionsJson, []), 3, 180),
     systemPrompt: row.systemPrompt,
     imageStyle: row.imageStyle || "realistic",
     visualContext: row.visualContext || "",
@@ -1381,9 +1782,13 @@ function deserializeAgent(row) {
     } : null,
     chatBackgroundOpacity: normalizeChatBackgroundOpacity(row.chatBackgroundOpacity),
     chatBackgroundBlur: normalizeChatBackgroundBlur(row.chatBackgroundBlur),
+    chatBackgroundOverlay: Boolean(row.chatBackgroundOverlay),
+    chatBrandVisible: row.chatBrandVisible !== 0,
     boundaries: safeJson(row.boundariesJson, []),
     safetyRules: safeJson(row.safetyRulesJson, []),
     prompts: safeJson(row.promptsJson, []),
+    quickActionsEnabled: Boolean(row.quickActionsEnabled),
+    dialogueState: safeJson(row.dialogueStateJson, {}),
     isBuiltin: Boolean(row.isBuiltin),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -1445,6 +1850,18 @@ function normalizeAutoRead(value) {
   return value === true || value === 1 || value === "1" || value === "true" ? 1 : 0;
 }
 
+function normalizeBoolean(value) {
+  return value === true || value === 1 || value === "1" || value === "true" ? 1 : 0;
+}
+
+function normalizeTextArray(value, limit = 3, itemLimit = 180) {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => String(item || "").trim().slice(0, itemLimit))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 function normalizeVoiceSpeed(value) {
   if (value === "slow") return 0.85;
   if (value === "normal") return 1;
@@ -1474,7 +1891,9 @@ function normalizeResponseStyle(value) {
     "dream",
     "lover",
     "reserved",
-    "story"
+    "story",
+    "immersive",
+    "history"
   ].includes(style) ? style : "balanced";
 }
 

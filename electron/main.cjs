@@ -53,7 +53,7 @@ function createWindow(url) {
     height: 820,
     minWidth: 1080,
     minHeight: 720,
-    title: "\u89d2\u8272\u667a\u80fd\u4f53\u5de5\u4f5c\u53f0",
+    title: "2link\uff1a\u865a\u62df\u89d2\u8272\u667a\u80fd\u4f53",
     backgroundColor: "#f4f6f3",
     autoHideMenuBar: true,
     webPreferences: {
@@ -62,6 +62,8 @@ function createWindow(url) {
       sandbox: true
     }
   });
+
+  configureLocalMediaPermissions(mainWindow, url);
 
   mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
     shell.openExternal(targetUrl);
@@ -72,6 +74,28 @@ function createWindow(url) {
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
     mainWindow.focus();
+  });
+}
+
+function configureLocalMediaPermissions(window, appUrl) {
+  const allowedOrigin = new URL(appUrl).origin;
+  const appSession = window.webContents.session;
+  const isAllowedAudioRequest = (permission, requestingUrl, details = {}) => {
+    if (permission !== "media") return false;
+    let origin = "";
+    try {
+      origin = new URL(requestingUrl || "").origin;
+    } catch {
+      return false;
+    }
+    const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+    return origin === allowedOrigin && (!mediaTypes.length || mediaTypes.includes("audio"));
+  };
+  appSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isAllowedAudioRequest(permission, details?.requestingUrl || webContents.getURL(), details));
+  });
+  appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    return isAllowedAudioRequest(permission, requestingOrigin || webContents.getURL(), details);
   });
 }
 

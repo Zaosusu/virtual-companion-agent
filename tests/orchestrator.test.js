@@ -248,6 +248,26 @@ test("text agent response profile controls reply length", () => {
   assert.match(short.lengthProfile.instruction, /1-2 句/);
 });
 
+test("text agent accepts mobile immersive and history response styles", () => {
+  const immersive = buildResponseProfile({
+    character: { runtime_config: { responseStyle: "immersive", creativityLevel: 0.7 } },
+    message: "继续这个场景",
+    workflow: "creative",
+    safety: { level: "normal" }
+  });
+  const history = buildResponseProfile({
+    character: { runtime_config: { responseStyle: "history", creativityLevel: 0.5 } },
+    message: "像以前那样跟我说话",
+    workflow: "companionship",
+    safety: { level: "normal" }
+  });
+
+  assert.equal(immersive.style, "immersive");
+  assert.equal(immersive.strategy.label, "沉浸式演绎");
+  assert.equal(history.style, "history");
+  assert.equal(history.strategy.label, "历史聊天风格");
+});
+
 test("text agent varies narration rhythm instead of always starting with action", () => {
   const profile = buildResponseProfile({
     character: { runtime_config: { responseStyle: "dream", creativityLevel: 0.9 } },

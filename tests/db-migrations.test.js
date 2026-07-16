@@ -51,7 +51,7 @@ test("opening an old database migrates once and creates a backup", () => {
 
   const store = new CompanionStore(dbPath);
   try {
-    assert.equal(store.getSchemaVersion(), 7);
+    assert.equal(store.getSchemaVersion(), 8);
     assert.ok(store.db.prepare("PRAGMA table_info(messages)").all().some((column) => column.name === "updated_at"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "chat_background_data"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "auto_read"));
@@ -59,17 +59,22 @@ test("opening an old database migrates once and creates a backup", () => {
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "response_style"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "creativity_level"));
     assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "reply_length"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "user_persona"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "opening_suggestions_json"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "quick_actions_enabled"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "chat_background_overlay"));
+    assert.ok(store.db.prepare("PRAGMA table_info(agents)").all().some((column) => column.name === "dialogue_state_json"));
   } finally {
     store.close();
   }
 
-  const backups = readdirSync(dir).filter((name) => name.startsWith("old.sqlite.bak-v2-to-v7-"));
+  const backups = readdirSync(dir).filter((name) => name.startsWith("old.sqlite.bak-v2-to-v8-"));
   assert.equal(backups.length, 1);
   assert.ok(existsSync(path.join(dir, backups[0])));
 
   const reopened = new CompanionStore(dbPath);
   try {
-    assert.equal(reopened.getSchemaVersion(), 7);
+    assert.equal(reopened.getSchemaVersion(), 8);
   } finally {
     reopened.close();
     rmSync(dir, { recursive: true, force: true });

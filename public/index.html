@@ -43,12 +43,32 @@
           <button class="ghost compact-action" id="clearChatButton" type="button">清空聊天</button>
         </header>
 
+        <div class="scene-brand" id="sceneBrand" aria-hidden="true"><strong>2link</strong></div>
         <div class="quick-actions" id="quickActions" aria-label="快捷提示"></div>
+        <div class="opening-suggestions" id="openingSuggestions" aria-label="开场建议"></div>
         <div class="messages" id="messages" aria-live="polite"></div>
 
         <form class="composer" id="composer">
+          <div class="composer-mode" id="composerEditMode" hidden>
+            <span>正在编辑上一条消息</span>
+            <button id="cancelMessageEditButton" type="button" aria-label="取消编辑" title="取消编辑">×</button>
+          </div>
+          <div class="composer-mode composer-voice-mode" id="composerVoiceMode" hidden>
+            <span id="composerVoiceStatus">语音已转成文字</span>
+            <button id="cancelVoiceDraftButton" type="button" aria-label="清除语音转文字结果" title="清除">×</button>
+          </div>
+          <div class="composer-attachment">
+            <button class="composer-attach" id="attachButton" type="button" title="添加" aria-label="添加图片或语音转文字">+</button>
+            <div class="composer-attach-menu" id="attachMenu" hidden>
+              <label>图片<input id="chatImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden /></label>
+              <button id="voiceDraftButton" type="button">语音转文字</button>
+            </div>
+          </div>
+          <button class="composer-microphone" id="voiceToTextButton" type="button" aria-label="发送语音" title="发送语音">
+            <span class="microphone-icon" aria-hidden="true"></span>
+          </button>
           <textarea id="messageInput" rows="1" placeholder="跟角色说点什么..." autocomplete="off"></textarea>
-          <button type="submit">发送</button>
+          <button id="sendButton" type="submit">发送</button>
         </form>
       </section>
 
@@ -141,6 +161,8 @@
                   <option value="lover">撒娇恋人</option>
                   <option value="reserved">克制冷感</option>
                   <option value="story">剧情发散</option>
+                  <option value="immersive">沉浸式演绎</option>
+                  <option value="history">模仿历史聊天</option>
                 </select>
               </label>
               <label class="range-control">
@@ -237,6 +259,14 @@
                   <input id="chatBackgroundBlur" type="range" min="0" max="24" step="1" />
                 </label>
               </div>
+              <label class="toggle-line">
+                <input id="chatBackgroundOverlay" type="checkbox" />
+                <span>背景遮罩</span>
+              </label>
+              <label class="toggle-line">
+                <input id="chatBrandVisible" type="checkbox" />
+                <span>显示 2link 标记</span>
+              </label>
               <button class="secondary" id="clearChatBackgroundButton" type="button">&#24674;&#22797;&#40664;&#35748;&#32972;&#26223;</button>
               <p class="form-hint">&#27599;&#20010;&#35282;&#33394;&#21487;&#35774;&#32622;&#29420;&#31435;&#32972;&#26223;&#22270;&#65292;&#20445;&#23384;&#21518;&#21047;&#26032;&#20063;&#20250;&#20445;&#30041;&#12290;</p>
             </div>
@@ -271,6 +301,8 @@
             <h2>角色配置</h2>
             <span id="agentConfigStatus">已加载</span>
           </div>
+          <button class="secondary full optimize-agent-button" id="optimizeAgentButton" type="button">AI 优化全部</button>
+          <p class="form-hint" id="agentOptimizeStatus">根据当前设定和人物资料库补全角色，不会直接覆盖，确认后才应用。</p>
           <form class="config-form" id="agentConfigForm">
             <div class="form-grid">
               <label>
@@ -318,9 +350,21 @@
               <span>关系定位</span>
               <textarea id="agentRelationship" rows="3"></textarea>
             </label>
+            <label class="toggle-line">
+              <input id="userPersonaEnabled" type="checkbox" />
+              <span>让角色了解“我是谁”</span>
+            </label>
+            <label id="userPersonaEditor">
+              <span>我的身份设定</span>
+              <textarea id="userPersona" rows="4" placeholder="例如：我是……角色称呼我……我们之间的关系是……"></textarea>
+            </label>
             <label>
               <span>开场白</span>
               <textarea id="agentOpening" rows="3"></textarea>
+            </label>
+            <label>
+              <span>开场建议，每行一条</span>
+              <textarea id="agentOpeningSuggestions" rows="3" placeholder="最多三条，用户可点击后编辑或发送"></textarea>
             </label>
             <label>
               <span>系统提示词</span>
@@ -342,8 +386,12 @@
               <p class="form-hint">她以后发自拍时，会尽量照着这张图保持脸型、发型和整体感觉。</p>
             </div>
             <label>
-              <span>预设问题，每行一条</span>
+              <span>快捷问题，每行一条</span>
               <textarea id="agentPrompts" rows="4"></textarea>
+            </label>
+            <label class="toggle-line">
+              <input id="quickActionsEnabled" type="checkbox" />
+              <span>在聊天页显示快捷问题</span>
             </label>
             <label>
               <span>边界规则，每行一条</span>
@@ -379,18 +427,48 @@
 
         <section class="profile-block">
           <div class="section-title">
+            <h2>本机数据备份</h2>
+            <span id="backupStatus">未操作</span>
+          </div>
+          <div class="button-row two">
+            <button class="secondary" id="exportBackupButton" type="button">导出全部数据</button>
+            <label class="import-button">
+              导入全部数据
+              <input id="importBackupInput" type="file" accept="application/json,.json" />
+            </label>
+          </div>
+          <p class="form-hint">包含角色、聊天记录、记忆和图片素材，不包含登录状态、授权码或 API Key。导入会替换当前本机数据。</p>
+        </section>
+
+        <section class="profile-block">
+          <div class="section-title">
             <h2>人物资料库</h2>
             <span id="personaCorpusStatus">未导入</span>
           </div>
           <form class="config-form" id="personaCorpusForm">
             <label>
               <span>资料文件</span>
-              <input id="personaCorpusFile" type="file" multiple accept=".txt,.md,.srt,.vtt,.json,.csv,.log,text/plain,text/markdown,text/csv,application/json" />
+              <input id="personaCorpusFile" type="file" multiple accept=".txt,.md,.srt,.vtt,.json,.csv,.log,.pdf,text/plain,text/markdown,text/csv,application/json,application/pdf" />
             </label>
             <label>
               <span>资料文件夹</span>
-              <input id="personaCorpusFolder" type="file" webkitdirectory directory multiple />
+              <input id="personaCorpusFolder" type="file" webkitdirectory directory multiple accept=".txt,.md,.srt,.vtt,.json,.csv,.log,.pdf,text/plain,text/markdown,text/csv,application/json,application/pdf" />
             </label>
+            <p class="form-hint">单次最多读取 200 个文件。文本文件不超过 2MB，PDF 不超过 30MB；扫描版 PDF 会在登录后按页识别。</p>
+            <div class="form-grid">
+              <label>
+                <span>每份资料导入范围</span>
+                <select id="personaCorpusRangeMode">
+                  <option value="all">全部导入</option>
+                  <option value="head">导入前 N 段</option>
+                  <option value="tail">导入后 N 段</option>
+                </select>
+              </label>
+              <label>
+                <span>导入段数</span>
+                <input id="personaCorpusRangeCount" type="number" min="1" max="1000" step="1" value="100" disabled />
+              </label>
+            </div>
             <label>
               <span>资料关系</span>
               <select id="personaCorpusRelation">
@@ -413,6 +491,16 @@
           <div class="section-title">
             <h2>长期记忆</h2>
             <button class="ghost" id="resetMemory" type="button">清空</button>
+          </div>
+          <div class="memory-capsule-editor">
+            <label>
+              <span>记忆胶囊</span>
+              <textarea id="memoryCapsuleInput" rows="6" placeholder="写下角色必须长期记住的身份、关系、重要经历和称呼。"></textarea>
+            </label>
+            <div class="button-row two">
+              <button class="secondary" id="saveMemoryCapsuleButton" type="button">保存记忆胶囊</button>
+              <span id="memoryCapsuleStatus" class="form-hint">暂无记忆胶囊</span>
+            </div>
           </div>
           <div class="memory-list" id="memoryList"></div>
         </section>

@@ -1,6 +1,20 @@
 import { createRealtimeVoiceController } from "./realtimeVoice.js";
+import {
+  friendlyVoiceTranscriptionError,
+  prepareVoiceForTranscription,
+  requestVoiceTranscription
+} from "./voiceTranscription.js";
+import { extractPdfText, friendlyPdfError } from "./documentImport.js";
+import {
+  isPdfCorpusFile,
+  isSupportedCorpusTextFile,
+  selectCorpusTextRange
+} from "./corpusImport.js";
+import { requestChatWithRecovery, waitForChatCompletion } from "./chatRecovery.js";
+import { audioBlobToMessagePayload } from "./voiceMessage.js";
 
 const $ = (selector) => document.querySelector(selector);
+const CHAT_OUTBOX_KEY = "2link.desktop.chat.outbox.v1";
 
 const agentList = $("#agentList");
 const leftRail = $("#leftRail");
@@ -16,6 +30,17 @@ const cloneAgentButton = $("#cloneAgentButton");
 const messagesEl = $("#messages");
 const composer = $("#composer");
 const input = $("#messageInput");
+const sendButton = $("#sendButton");
+const composerEditMode = $("#composerEditMode");
+const cancelMessageEditButton = $("#cancelMessageEditButton");
+const composerVoiceMode = $("#composerVoiceMode");
+const composerVoiceStatus = $("#composerVoiceStatus");
+const cancelVoiceDraftButton = $("#cancelVoiceDraftButton");
+const voiceToTextButton = $("#voiceToTextButton");
+const attachButton = $("#attachButton");
+const attachMenu = $("#attachMenu");
+const voiceDraftButton = $("#voiceDraftButton");
+const chatImageInput = $("#chatImageInput");
 const template = $("#messageTemplate");
 const statusEl = $("#status");
 const modePill = $("#modePill");
@@ -24,10 +49,15 @@ const clearChatButton = $("#clearChatButton");
 const agentTitleEl = $("#agentTitle");
 const agentAvatarEl = $("#agentAvatar");
 const quickActions = $("#quickActions");
+const openingSuggestions = $("#openingSuggestions");
+const sceneBrand = $("#sceneBrand");
 const memoryListEl = $("#memoryList");
 const ragListEl = $("#ragList");
 const ragStatusEl = $("#ragStatus");
 const resetMemory = $("#resetMemory");
+const memoryCapsuleInput = $("#memoryCapsuleInput");
+const saveMemoryCapsuleButton = $("#saveMemoryCapsuleButton");
+const memoryCapsuleStatus = $("#memoryCapsuleStatus");
 
 const modelConfigForm = $("#modelConfigForm");
 const authAccount = $("#authAccount");
@@ -58,6 +88,8 @@ const chatBackgroundInput = $("#chatBackgroundInput");
 const chatBackgroundPreview = $("#chatBackgroundPreview");
 const chatBackgroundOpacity = $("#chatBackgroundOpacity");
 const chatBackgroundBlur = $("#chatBackgroundBlur");
+const chatBackgroundOverlay = $("#chatBackgroundOverlay");
+const chatBrandVisible = $("#chatBrandVisible");
 const clearChatBackgroundButton = $("#clearChatBackgroundButton");
 const generateImageButton = $("#generateImageButton");
 const speakLastButton = $("#speakLastButton");
@@ -83,6 +115,8 @@ const clearClonedVoiceButton = $("#clearClonedVoiceButton");
 
 const agentConfigForm = $("#agentConfigForm");
 const agentConfigStatus = $("#agentConfigStatus");
+const optimizeAgentButton = $("#optimizeAgentButton");
+const agentOptimizeStatus = $("#agentOptimizeStatus");
 const agentId = $("#agentId");
 const agentGender = $("#agentGender");
 const agentAvatarInput = $("#agentAvatarInput");
@@ -97,13 +131,18 @@ const analyzeAppearanceButton = $("#analyzeAppearanceButton");
 const appearanceAnalyzeStatus = $("#appearanceAnalyzeStatus");
 const agentVoiceStyle = $("#agentVoiceStyle");
 const agentRelationship = $("#agentRelationship");
+const userPersonaEnabled = $("#userPersonaEnabled");
+const userPersonaEditor = $("#userPersonaEditor");
+const userPersona = $("#userPersona");
 const agentOpening = $("#agentOpening");
+const agentOpeningSuggestions = $("#agentOpeningSuggestions");
 const agentSystemPrompt = $("#agentSystemPrompt");
 const agentVisualContext = $("#agentVisualContext");
 const agentReferenceImageInput = $("#agentReferenceImageInput");
 const agentReferencePreview = $("#agentReferencePreview");
 const clearReferenceImageButton = $("#clearReferenceImageButton");
 const agentPrompts = $("#agentPrompts");
+const quickActionsEnabled = $("#quickActionsEnabled");
 const agentBoundaries = $("#agentBoundaries");
 const agentSafetyRules = $("#agentSafetyRules");
 const exportAgentButton = $("#exportAgentButton");
@@ -111,12 +150,17 @@ const importAgentInput = $("#importAgentInput");
 const deleteAgentButton = $("#deleteAgentButton");
 const importForm = $("#importForm");
 const importText = $("#importText");
+const exportBackupButton = $("#exportBackupButton");
+const importBackupInput = $("#importBackupInput");
+const backupStatus = $("#backupStatus");
 const personaCorpusForm = $("#personaCorpusForm");
 const personaCorpusFile = $("#personaCorpusFile");
 const personaCorpusFolder = $("#personaCorpusFolder");
 const personaCorpusText = $("#personaCorpusText");
 const personaCorpusRelation = $("#personaCorpusRelation");
 const personaCorpusStatus = $("#personaCorpusStatus");
+const personaCorpusRangeMode = $("#personaCorpusRangeMode");
+const personaCorpusRangeCount = $("#personaCorpusRangeCount");
 
 let state = {
   agents: [],
@@ -138,7 +182,18 @@ let state = {
   experienceSaveTimer: null,
   oldestMessageId: null,
   hasMoreMessages: true,
-  loadingOlderMessages: false
+  loadingOlderMessages: false,
+  editingUserMessageId: null,
+  voiceDraftActive: false,
+  voiceRecorder: null,
+  voiceRecorderStream: null,
+  voiceRecorderChunks: [],
+  voiceRecordingMode: "voice",
+  voiceRecordingStartedAt: 0,
+  voiceRecordingTimer: null,
+  voiceTranscribing: false,
+  voiceTranscriptionCancelled: false,
+  personaCorpusImportPromise: null
 };
 
 const realtimeVoice = createRealtimeVoiceController({
@@ -176,6 +231,7 @@ async function init() {
   };
   renderAll();
   renderConversation(state.recentMessages);
+  resumePendingChatRequest().catch((error) => console.warn("[chat recovery]", error));
   if (!state.authUser) refreshAuthUser();
 }
 
@@ -210,11 +266,7 @@ function localizeAuthPanel() {
 
 composer.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = "";
-  input.style.height = "auto";
-  enqueueMessage(text);
+  submitComposerMessage();
 });
 
 input.addEventListener("input", () => {
@@ -225,12 +277,37 @@ input.addEventListener("input", () => {
 input.addEventListener("keydown", async (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
   event.preventDefault();
+  submitComposerMessage();
+});
+
+cancelMessageEditButton?.addEventListener("click", () => cancelMessageEdit({ clearInput: true }));
+cancelVoiceDraftButton?.addEventListener("click", cancelVoiceDraft);
+voiceToTextButton?.addEventListener("click", () => toggleVoiceToTextRecording("voice"));
+voiceDraftButton?.addEventListener("click", () => {
+  attachMenu.hidden = true;
+  toggleVoiceToTextRecording("text");
+});
+attachButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  attachMenu.hidden = !attachMenu.hidden;
+});
+attachMenu?.addEventListener("click", (event) => event.stopPropagation());
+document.addEventListener("click", () => {
+  if (attachMenu) attachMenu.hidden = true;
+});
+chatImageInput?.addEventListener("change", sendChatImageAttachment);
+
+function submitComposerMessage() {
+  if (state.voiceRecorder?.state === "recording" || state.voiceTranscribing) return;
   const text = input.value.trim();
   if (!text) return;
+  const editMessageId = state.editingUserMessageId;
   input.value = "";
   input.style.height = "auto";
-  enqueueMessage(text);
-});
+  cancelMessageEdit();
+  clearVoiceDraftState();
+  enqueueMessage(text, { editMessageId });
+}
 
 newAgentButton.addEventListener("click", async () => {
   const base = {
@@ -244,7 +321,10 @@ newAgentButton.addEventListener("click", async () => {
     appearance: "写下角色的发型、脸部特征、穿搭和整体气质。",
     voiceStyle: "中文口语，具体，稳定。",
     relationship: "亲近但有边界。",
+    userPersonaEnabled: false,
+    userPersona: "",
     openingMessage: "我在。你想让我怎么陪你？",
+    openingSuggestions: ["我来了，先告诉我现在发生了什么。", "我想听听你的想法。", "不如从一个意外开始。"],
     systemPrompt: "请完全按照人设进行第一人称沉浸式对话。日常聊天不要跳出角色，不要解释自己是系统或模型。",
   imageStyle: "realistic",
   visualContext: "",
@@ -257,6 +337,9 @@ newAgentButton.addEventListener("click", async () => {
   avatarImage: null,
   referenceImage: null,
     prompts: ["陪我聊聊", "帮我拆一个计划"],
+    quickActionsEnabled: false,
+    chatBackgroundOverlay: false,
+    chatBrandVisible: true,
     boundaries: ["不做现实身份验证、线下承诺或现实关系承诺"],
     safetyRules: ["出现自伤风险时优先安全降级"]
   };
@@ -342,13 +425,20 @@ logoutButton?.addEventListener("click", async () => {
 
 agentConfigForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const agent = readAgentForm();
-  const result = await api("/api/config", {
-    method: "POST",
-    body: JSON.stringify({ agent })
-  });
-  await applyAgentResult(result);
-  addMessage("system", "角色配置已保存，下一轮对话生效。");
+  agentConfigStatus.textContent = "保存中...";
+  try {
+    const agent = readAgentForm();
+    const result = await api("/api/config", {
+      method: "POST",
+      body: JSON.stringify({ agent })
+    });
+    await applyAgentResult(result);
+    agentConfigStatus.textContent = "已保存";
+    addMessage("system", "角色配置已保存，下一轮对话生效。");
+  } catch (error) {
+    agentConfigStatus.textContent = "保存失败";
+    addMessage("system", `角色配置保存失败：${error.message}`);
+  }
 });
 
 exportAgentButton.addEventListener("click", async () => {
@@ -410,6 +500,61 @@ importAgentInput?.addEventListener("change", async () => {
   }
 });
 
+exportBackupButton?.addEventListener("click", exportFullBackup);
+importBackupInput?.addEventListener("change", importFullBackup);
+
+async function exportFullBackup() {
+  const oldText = exportBackupButton.textContent;
+  exportBackupButton.disabled = true;
+  exportBackupButton.textContent = "正在打包...";
+  if (backupStatus) backupStatus.textContent = "正在导出";
+  try {
+    const backup = await api("/api/backup/export");
+    downloadText(JSON.stringify(backup, null, 2), `2link-desktop-backup-${new Date().toISOString().slice(0, 10)}.json`);
+    if (backupStatus) backupStatus.textContent = `已导出 ${backup.messages?.length || 0} 条聊天`;
+  } catch (error) {
+    if (backupStatus) backupStatus.textContent = "导出失败";
+    addMessage("system", `完整备份导出失败：${error.message}`);
+  } finally {
+    exportBackupButton.disabled = false;
+    exportBackupButton.textContent = oldText;
+  }
+}
+
+async function importFullBackup() {
+  const file = importBackupInput?.files?.[0];
+  if (importBackupInput) importBackupInput.value = "";
+  if (!file) return;
+  if (file.size > 250 * 1024 * 1024) {
+    if (backupStatus) backupStatus.textContent = "文件超过 250MB";
+    return;
+  }
+  if (!confirm("导入完整备份会替换当前角色、聊天记录和记忆。继续吗？")) return;
+  if (backupStatus) backupStatus.textContent = "正在恢复";
+  try {
+    const backup = JSON.parse(await file.text());
+    if (backup?.format !== "2link-desktop-backup") throw new Error("请选择电脑客户端导出的完整备份文件。");
+    const result = await api("/api/backup/import", {
+      method: "POST",
+      body: JSON.stringify({ backup })
+    });
+    state.agents = result.agents || [];
+    state.activeAgentId = result.active_agent_id;
+    state.activeAgent = result.agent;
+    state.memory = result.memory;
+    state.recentMessages = result.recent_messages || [];
+    if (result.model_config) state.modelConfig = result.model_config;
+    clearChatOutbox();
+    renderAll();
+    renderConversation(state.recentMessages);
+    if (backupStatus) backupStatus.textContent = "恢复完成";
+    addMessage("system", "完整备份已恢复；恢复前的数据也已自动保存在本机数据目录。" );
+  } catch (error) {
+    if (backupStatus) backupStatus.textContent = "恢复失败";
+    addMessage("system", `完整备份恢复失败：${error.message}`);
+  }
+}
+
 personaCorpusFile.addEventListener("change", async () => {
   await loadPersonaCorpusFiles(Array.from(personaCorpusFile.files || []), "文件");
 });
@@ -418,9 +563,17 @@ personaCorpusFolder.addEventListener("change", async () => {
   await loadPersonaCorpusFiles(Array.from(personaCorpusFolder.files || []), "文件夹");
 });
 
+personaCorpusRangeMode?.addEventListener("change", () => {
+  if (personaCorpusRangeCount) personaCorpusRangeCount.disabled = personaCorpusRangeMode.value === "all";
+});
+
 personaCorpusForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const text = personaCorpusText.value.trim();
+  const rawText = personaCorpusText.value.trim();
+  const fromFiles = Boolean(personaCorpusFile.files?.length || personaCorpusFolder.files?.length);
+  const text = fromFiles
+    ? rawText
+    : selectCorpusTextRange(rawText, personaCorpusRangeMode?.value, personaCorpusRangeCount?.value).text;
   if (text.length < 20) {
     personaCorpusStatus.textContent = "资料太短";
     return;
@@ -452,6 +605,24 @@ resetMemory.addEventListener("click", async () => {
   renderMemory();
   renderRag([]);
   addMessage("system", "长期记忆、消息和 RAG 索引已清空。");
+});
+
+saveMemoryCapsuleButton?.addEventListener("click", async () => {
+  saveMemoryCapsuleButton.disabled = true;
+  memoryCapsuleStatus.textContent = "保存中...";
+  try {
+    const result = await api("/api/memory/capsule", {
+      method: "POST",
+      body: JSON.stringify({ content: memoryCapsuleInput.value.trim() })
+    });
+    state.memory = result.memory;
+    renderMemory();
+    memoryCapsuleStatus.textContent = memoryCapsuleInput.value.trim() ? "已保存" : "已清除";
+  } catch (error) {
+    memoryCapsuleStatus.textContent = `保存失败：${error.message}`;
+  } finally {
+    saveMemoryCapsuleButton.disabled = false;
+  }
 });
 
 clearChatButton.addEventListener("click", async () => {
@@ -507,6 +678,8 @@ appearanceImageInput.addEventListener("change", async () => {
 analyzeAppearanceButton.addEventListener("click", async () => {
   await analyzeAppearanceFromImage();
 });
+
+optimizeAgentButton?.addEventListener("click", optimizeAgentConfiguration);
 
 testTtsButton.addEventListener("click", async () => {
   await playSpeech("我在。今天想让我用什么语气陪你？", testTtsButton);
@@ -628,6 +801,18 @@ chatBackgroundBlur.addEventListener("input", () => {
   queueExperienceSave();
 });
 
+chatBackgroundOverlay?.addEventListener("change", () => {
+  if (state.activeAgent) state.activeAgent.chatBackgroundOverlay = chatBackgroundOverlay.checked;
+  applyChatBackground(state.activeAgent);
+  queueExperienceSave();
+});
+
+chatBrandVisible?.addEventListener("change", () => {
+  if (state.activeAgent) state.activeAgent.chatBrandVisible = chatBrandVisible.checked;
+  renderSceneBrand(state.activeAgent);
+  queueExperienceSave();
+});
+
 agentVoiceGender.addEventListener("change", () => {
   if (state.activeAgent) state.activeAgent.voiceGender = agentVoiceGender.value;
   queueExperienceSave();
@@ -679,6 +864,14 @@ installRangeDrag(replyLength);
 autoReadToggle.addEventListener("change", () => {
   if (state.activeAgent) state.activeAgent.autoRead = autoReadToggle.checked;
   queueExperienceSave();
+});
+
+userPersonaEnabled?.addEventListener("change", () => {
+  renderUserPersonaEditor();
+});
+
+quickActionsEnabled?.addEventListener("change", () => {
+  renderQuickActions(state.activeAgent?.prompts || [], quickActionsEnabled.checked);
 });
 
 voiceCloneInput.addEventListener("change", async () => {
@@ -740,12 +933,14 @@ clearClonedVoiceButton.addEventListener("click", async () => {
 });
 
 async function activateAgent(id) {
+  cancelMessageEdit({ clearInput: true });
   const result = await api(`/api/agents/${encodeURIComponent(id)}/activate`, { method: "POST" });
   state.activeAgentId = result.active_agent_id;
   state.activeAgent = result.agent;
   renderAgent();
   renderAgentList();
   renderConversation(result.recent_messages || []);
+  resumePendingChatRequest().catch(() => {});
 }
 
 async function applyAgentResult(result) {
@@ -772,23 +967,60 @@ async function applyAgentResult(result) {
   renderAll();
 }
 
-async function sendMessage(text) {
-  addMessage("user", text);
+async function sendMessage(text, { editMessageId = null, userImage = null, userVoice = null, requestId = createClientRequestId(), skipLocalUser = false } = {}) {
+  renderOpeningSuggestions([{ role: "user", content: text }]);
+  if (!editMessageId && !skipLocalUser) {
+    const localMetadata = userImage ? {
+      type: "image",
+      b64Json: userImage.data,
+      imageUrl: toDataUrl(userImage),
+      prompt: userImage.name || "图片",
+      source: "user:image"
+    } : userVoice ? {
+      type: "voice",
+      transcript: text,
+      source: "user:voice",
+      audio: {
+        audioBase64: userVoice.data,
+        mimeType: userVoice.mime,
+        format: userVoice.format,
+        durationMs: userVoice.durationMs
+      }
+    } : {};
+    addMessage("user", text, { metadata: localMetadata });
+  }
   const localVoiceExperience = currentVoiceExperienceSettings();
+  const payload = {
+    message: text,
+    requestId,
+    edit_message_id: editMessageId || undefined,
+    image: userImage || undefined,
+    voice: userVoice || undefined
+  };
+  if (!userImage && !userVoice) saveChatOutbox({ requestId, agentId: state.activeAgentId, payload });
   try {
-    const result = await api("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({ message: text })
+    const result = await requestChatWithRecovery({
+      requestId,
+      send: () => api("/api/chat", { method: "POST", body: JSON.stringify(payload) }),
+      getStatus: () => api(`/api/chat/status?requestId=${encodeURIComponent(requestId)}`)
     });
+    clearChatOutbox(requestId);
     state.memory = result.memory;
     state.activeAgent = mergeLocalVoiceExperience(result.agent || state.activeAgent, localVoiceExperience);
     renderRag(result.retrieved_memories || []);
-    const quotaText = result.quota?.mode === "free_quota" ? ` · 免费剩余 ${result.quota.remaining}` : "";
-    const routed = await runFrontAgents({ userText: text, result });
-    renderAssistantOutputs(routed, quotaText);
+    if ((editMessageId || result.recovered) && result.recent_messages) {
+      renderConversation(result.recent_messages);
+    } else {
+      const quotaText = result.quota?.mode === "free_quota" ? ` · 免费剩余 ${result.quota.remaining}` : "";
+      const routed = await runFrontAgents({ userText: text, result });
+      renderAssistantOutputs(routed, quotaText);
+    }
     renderMemory();
   } catch (error) {
-    addMessage("system", friendlyErrorMessage(error));
+    if (!error.recoveryPending) clearChatOutbox(requestId);
+    addMessage("system", error.recoveryPending
+      ? "消息仍在处理中，恢复连接后会自动显示结果。"
+      : friendlyErrorMessage(error));
   }
 }
 
@@ -824,6 +1056,183 @@ async function regenerateLastAssistant(messageId) {
     setBusy(false);
     refreshRegenerateButtons();
   }
+}
+
+async function sendChatImageAttachment() {
+  if (attachMenu) attachMenu.hidden = true;
+  const file = chatImageInput?.files?.[0];
+  if (chatImageInput) chatImageInput.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    addMessage("system", "请选择 png、jpg 或 webp 图片。");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    addMessage("system", "图片不能超过 10MB。");
+    return;
+  }
+  try {
+    const image = await readImageFile(file);
+    enqueueMessage(`我给你看一张图片：${file.name || "图片"}`, { userImage: image });
+  } catch (error) {
+    addMessage("system", `图片发送失败：${error.message}`);
+  }
+}
+
+async function toggleVoiceToTextRecording(mode = "voice") {
+  if (state.voiceRecorder?.state === "recording") {
+    state.voiceRecorder.stop();
+    return;
+  }
+  if (state.voiceTranscribing) return;
+  if (state.editingUserMessageId) {
+    addMessage("system", "请先完成或取消消息编辑，再使用语音转文字。");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    addMessage("system", "当前环境不支持录音，请使用新版 Chrome、Edge 或桌面客户端。");
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = preferredVoiceRecorderMimeType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    state.voiceRecorder = recorder;
+    state.voiceRecorderStream = stream;
+    state.voiceRecorderChunks = [];
+    state.voiceRecordingMode = mode === "text" ? "text" : "voice";
+    state.voiceRecordingStartedAt = Date.now();
+    state.voiceTranscriptionCancelled = false;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) state.voiceRecorderChunks.push(event.data);
+    });
+    recorder.addEventListener("stop", finishVoiceToTextRecording, { once: true });
+    recorder.start();
+    clearTimeout(state.voiceRecordingTimer);
+    state.voiceRecordingTimer = setTimeout(() => {
+      if (state.voiceRecorder?.state === "recording") state.voiceRecorder.stop();
+    }, 120_000);
+    voiceToTextButton.classList.add("recording");
+    voiceToTextButton.setAttribute("aria-pressed", "true");
+    voiceToTextButton.title = "停止录音";
+    showVoiceInputMode(state.voiceRecordingMode === "text" ? "正在录音，完成后转成文字" : "正在录制语音消息，再点一次停止");
+  } catch (error) {
+    resetVoiceRecorder();
+    addMessage("system", `无法开始录音：${error?.message || "请检查麦克风权限。"}`);
+  }
+}
+
+async function finishVoiceToTextRecording() {
+  const chunks = state.voiceRecorderChunks.slice();
+  const mimeType = state.voiceRecorder?.mimeType || chunks[0]?.type || "audio/webm";
+  const durationMs = Math.max(0, Date.now() - Number(state.voiceRecordingStartedAt || 0));
+  const cancelled = state.voiceTranscriptionCancelled;
+  const recordingMode = state.voiceRecordingMode || "voice";
+  resetVoiceRecorder();
+  if (cancelled) {
+    clearVoiceDraftState();
+    return;
+  }
+  if (!chunks.length || durationMs < 500) {
+    clearVoiceDraftState();
+    addMessage("system", "录音太短，没有进行识别。");
+    return;
+  }
+
+  const sourceBlob = new Blob(chunks, { type: mimeType });
+  if (sourceBlob.size > 8 * 1024 * 1024) {
+    clearVoiceDraftState();
+    addMessage("system", "录音不能超过 8MB，请缩短后重新录制。");
+    return;
+  }
+
+  state.voiceTranscribing = true;
+  voiceToTextButton.disabled = true;
+  voiceToTextButton.classList.add("transcribing");
+  showVoiceInputMode("正在识别语音...");
+  try {
+    const prepared = await prepareVoiceForTranscription(sourceBlob);
+    if (prepared.blob.size > 8 * 1024 * 1024) {
+      const error = new Error("转换后的录音超过 8MB，请缩短后重新录制。");
+      error.code = "voice_audio_too_large";
+      error.status = 413;
+      throw error;
+    }
+    const result = await requestVoiceTranscription(prepared.blob, { format: prepared.format });
+    if (state.voiceTranscriptionCancelled) return;
+    if (recordingMode === "voice") {
+      const voice = await audioBlobToMessagePayload(sourceBlob, { durationMs });
+      clearVoiceDraftState();
+      enqueueMessage(result.text, { userVoice: voice });
+      return;
+    }
+    const prefix = input.value.trim();
+    input.value = [prefix, result.text].filter(Boolean).join(prefix ? " " : "");
+    state.voiceDraftActive = true;
+    showVoiceInputMode("语音已转成文字，可修改后发送");
+    resizeComposerInput();
+    input.focus();
+    input.setSelectionRange?.(input.value.length, input.value.length);
+  } catch (error) {
+    if (!state.voiceTranscriptionCancelled) {
+      clearVoiceDraftState();
+      addMessage("system", `语音转文字失败：${friendlyVoiceTranscriptionError(error)}`);
+    }
+  } finally {
+    state.voiceTranscribing = false;
+    state.voiceTranscriptionCancelled = false;
+    voiceToTextButton.disabled = false;
+    voiceToTextButton.classList.remove("transcribing");
+  }
+}
+
+function cancelVoiceDraft() {
+  state.voiceTranscriptionCancelled = true;
+  if (state.voiceRecorder?.state === "recording") {
+    state.voiceRecorder.stop();
+    return;
+  }
+  if (state.voiceDraftActive) {
+    input.value = "";
+    resizeComposerInput();
+  }
+  clearVoiceDraftState();
+  input.focus();
+}
+
+function clearVoiceDraftState() {
+  state.voiceDraftActive = false;
+  if (composerVoiceMode) composerVoiceMode.hidden = true;
+}
+
+function showVoiceInputMode(text) {
+  if (composerVoiceStatus) composerVoiceStatus.textContent = text;
+  if (composerVoiceMode) composerVoiceMode.hidden = false;
+}
+
+function resetVoiceRecorder() {
+  clearTimeout(state.voiceRecordingTimer);
+  state.voiceRecordingTimer = null;
+  state.voiceRecorderStream?.getTracks?.().forEach((track) => track.stop());
+  state.voiceRecorderStream = null;
+  state.voiceRecorder = null;
+  state.voiceRecorderChunks = [];
+  state.voiceRecordingMode = "voice";
+  state.voiceRecordingStartedAt = 0;
+  voiceToTextButton?.classList.remove("recording");
+  voiceToTextButton?.removeAttribute("aria-pressed");
+  if (voiceToTextButton) voiceToTextButton.title = "发送语音";
+}
+
+function preferredVoiceRecorderMimeType() {
+  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  return types.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function resizeComposerInput() {
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
 }
 
 async function generateCharacterImage() {
@@ -895,12 +1304,13 @@ function buildCharacterImagePrompt(agent) {
   ].filter(Boolean).join("\n");
 }
 
-function enqueueMessage(text) {
+function enqueueMessage(text, options = {}) {
+  const queuedOptions = { ...options, requestId: options.requestId || createClientRequestId() };
   pendingChatCount += 1;
   setBusy(true);
   chatQueue = chatQueue
     .catch(() => {})
-    .then(() => sendMessage(text))
+    .then(() => sendMessage(text, queuedOptions))
     .finally(() => {
       pendingChatCount = Math.max(0, pendingChatCount - 1);
       if (pendingChatCount === 0) setBusy(false);
@@ -908,6 +1318,69 @@ function enqueueMessage(text) {
     });
   refreshRegenerateButtons();
   return chatQueue;
+}
+
+function createClientRequestId() {
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function saveChatOutbox(entry) {
+  try {
+    localStorage.setItem(CHAT_OUTBOX_KEY, JSON.stringify({ ...entry, createdAt: new Date().toISOString() }));
+  } catch {}
+}
+
+function readChatOutbox() {
+  try {
+    const entry = JSON.parse(localStorage.getItem(CHAT_OUTBOX_KEY) || "null");
+    if (!entry?.requestId || !entry?.payload?.message) return null;
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function clearChatOutbox(requestId = "") {
+  const current = readChatOutbox();
+  if (requestId && current?.requestId && current.requestId !== requestId) return;
+  try {
+    localStorage.removeItem(CHAT_OUTBOX_KEY);
+  } catch {}
+}
+
+async function resumePendingChatRequest() {
+  const entry = readChatOutbox();
+  if (!entry || entry.agentId !== state.activeAgentId || pendingChatCount > 0) return;
+  const createdAt = new Date(entry.createdAt || 0).getTime();
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt > 24 * 60 * 60 * 1000) {
+    clearChatOutbox(entry.requestId);
+    return;
+  }
+  const status = await waitForChatCompletion({
+    requestId: entry.requestId,
+    maxWaitMs: 2_500,
+    intervalMs: 500,
+    getStatus: () => api(`/api/chat/status?requestId=${encodeURIComponent(entry.requestId)}`)
+  });
+  if (status.state === "completed") {
+    clearChatOutbox(entry.requestId);
+    const result = status.response || {};
+    state.memory = result.memory || state.memory;
+    state.activeAgent = result.agent || state.activeAgent;
+    if (result.recent_messages) renderConversation(result.recent_messages);
+    renderMemory();
+    return;
+  }
+  if (status.state === "not_found") {
+    enqueueMessage(entry.payload.message, {
+      editMessageId: entry.payload.edit_message_id || null,
+      requestId: entry.requestId,
+      skipLocalUser: true
+    });
+    return;
+  }
+  clearTimeout(state.chatRecoveryTimer);
+  state.chatRecoveryTimer = setTimeout(() => resumePendingChatRequest().catch(() => {}), 3_000);
 }
 
 function friendlyErrorMessage(error) {
@@ -952,11 +1425,13 @@ function renderConversation(messages) {
   state.loadingOlderMessages = false;
   if (!messages?.length) {
     addMessage("assistant", state.activeAgent.openingMessage || "我在。");
+    renderOpeningSuggestions([]);
     state.hasMoreMessages = false;
     return;
   }
   const visibleMessages = collapseVoiceTextPairs(messages);
   const lastAssistantId = lastRefreshableAssistantId(visibleMessages);
+  const lastUserId = lastEditableUserMessageId(visibleMessages);
   for (const message of visibleMessages) {
     addMessage(message.role, message.content, {
       messageId: message.id,
@@ -966,9 +1441,11 @@ function renderConversation(messages) {
           ? "你"
           : "系统",
       metadata: message.metadata || {},
-      canRegenerate: message.id === lastAssistantId
+      canRegenerate: message.id === lastAssistantId,
+      canEdit: message.id === lastUserId
     });
   }
+  renderOpeningSuggestions(visibleMessages);
 }
 
 async function loadOlderMessages() {
@@ -1032,6 +1509,16 @@ function lastRefreshableAssistantId(messages = []) {
     if (message.role === "assistant" && (message.status || "active") === "active" && message.metadata?.type !== "voice") {
       return message.id;
     }
+  }
+  return null;
+}
+
+function lastEditableUserMessageId(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "user" || (message.status || "active") !== "active") continue;
+    if (message.metadata?.type && message.metadata.type !== "text") return null;
+    return String(message.content || "").trim() ? Number(message.id) : null;
   }
   return null;
 }
@@ -1280,7 +1767,11 @@ function renderAgent() {
   agentAppearance.value = agent.appearance || "";
   agentVoiceStyle.value = agent.voiceStyle || "";
   agentRelationship.value = agent.relationship || "";
+  userPersonaEnabled.checked = Boolean(agent.userPersonaEnabled);
+  userPersona.value = agent.userPersona || "";
+  renderUserPersonaEditor();
   agentOpening.value = agent.openingMessage || "";
+  agentOpeningSuggestions.value = (agent.openingSuggestions || []).join("\n");
   agentSystemPrompt.value = agent.systemPrompt || "";
   experienceImageStyle.value = agent.imageStyle || "realistic";
   if (responseStyle) responseStyle.value = normalizeResponseStyleValue(agent.responseStyle);
@@ -1290,6 +1781,8 @@ function renderAgent() {
   renderReplyLengthValue();
   chatBackgroundOpacity.value = String(agent.chatBackgroundOpacity ?? 0.18);
   chatBackgroundBlur.value = String(agent.chatBackgroundBlur ?? 0);
+  chatBackgroundOverlay.checked = agent.chatBackgroundOverlay === true;
+  chatBrandVisible.checked = agent.chatBrandVisible !== false;
   agentVoiceGender.value = agent.voiceGender || "female";
   agentVoiceTone.value = agent.voiceTone || "warm";
   voiceSpeed.value = String(normalizeVoiceSpeedValue(agent.voiceSpeed));
@@ -1319,16 +1812,19 @@ function renderAgent() {
     clonedVoiceId: agent.clonedVoiceId || ""
   });
   agentPrompts.value = (agent.prompts || []).join("\n");
+  quickActionsEnabled.checked = Boolean(agent.quickActionsEnabled);
   agentBoundaries.value = (agent.boundaries || []).join("\n");
   agentSafetyRules.value = (agent.safetyRules || []).join("\n");
   agentConfigStatus.textContent = agent.isBuiltin ? "内置模板" : "自定义";
   deleteAgentButton.disabled = Boolean(agent.isBuiltin);
-  renderQuickActions(agent.prompts || []);
+  renderQuickActions(agent.prompts || [], agent.quickActionsEnabled);
+  renderSceneBrand(agent);
   renderStatus();
 }
 
-function renderQuickActions(prompts) {
+function renderQuickActions(prompts, enabled = false) {
   quickActions.innerHTML = "";
+  if (!enabled) return;
   for (const prompt of prompts.slice(0, 6)) {
     const button = document.createElement("button");
     button.type = "button";
@@ -1401,6 +1897,39 @@ function handleRealtimeResponseDone(data = {}) {
     delete last.dataset.realtimeAssistant;
     if (data.messageId) last.dataset.messageId = String(data.messageId);
   }
+}
+
+function renderOpeningSuggestions(messages = []) {
+  if (!openingSuggestions) return;
+  openingSuggestions.innerHTML = "";
+  const hasUserMessage = messages.some((message) => message.role === "user")
+    || Boolean(messagesEl.querySelector(".message.user"));
+  if (hasUserMessage) return;
+  const suggestions = Array.isArray(state.activeAgent?.openingSuggestions)
+    ? state.activeAgent.openingSuggestions.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 3)
+    : [];
+  for (const suggestion of suggestions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = suggestion;
+    button.title = suggestion;
+    button.addEventListener("click", () => {
+      input.value = suggestion;
+      input.focus();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    openingSuggestions.appendChild(button);
+  }
+}
+
+function renderUserPersonaEditor() {
+  const enabled = Boolean(userPersonaEnabled?.checked);
+  if (userPersonaEditor) userPersonaEditor.hidden = !enabled;
+  if (userPersona) userPersona.disabled = !enabled;
+}
+
+function renderSceneBrand(agent = state.activeAgent) {
+  if (sceneBrand) sceneBrand.hidden = agent?.chatBrandVisible === false;
 }
 
 function handleRealtimeVoiceError(message) {
@@ -1619,8 +2148,11 @@ function modelHintText(config) {
 }
 
 function initPanelToggles() {
-  const leftCollapsed = localStorage.getItem("leftPanelCollapsed") === "true";
-  const rightCollapsed = localStorage.getItem("rightPanelCollapsed") === "true";
+  const compactWindow = window.matchMedia("(max-width: 1240px)");
+  const savedLeft = localStorage.getItem("leftPanelCollapsed");
+  const savedRight = localStorage.getItem("rightPanelCollapsed");
+  const leftCollapsed = savedLeft === null ? compactWindow.matches : savedLeft === "true";
+  const rightCollapsed = savedRight === null ? compactWindow.matches : savedRight === "true";
   setPanelCollapsed("left", leftCollapsed);
   setPanelCollapsed("right", rightCollapsed);
 
@@ -1630,6 +2162,11 @@ function initPanelToggles() {
   showRightPanel.addEventListener("click", () => setPanelCollapsed("right", false));
   toggleLeftPanel.addEventListener("click", () => setPanelCollapsed("left", !document.body.classList.contains("left-collapsed")));
   toggleRightPanel.addEventListener("click", () => setPanelCollapsed("right", !document.body.classList.contains("right-collapsed")));
+  compactWindow.addEventListener?.("change", (event) => {
+    if (!event.matches) return;
+    setPanelCollapsed("left", true);
+    setPanelCollapsed("right", true);
+  });
 }
 
 function setPanelCollapsed(side, collapsed) {
@@ -1670,6 +2207,8 @@ async function saveExperienceSettings() {
           clearChatBackground: state.clearChatBackground,
           chatBackgroundOpacity: Number(chatBackgroundOpacity.value || 0),
           chatBackgroundBlur: Number(chatBackgroundBlur.value || 0),
+          chatBackgroundOverlay: Boolean(chatBackgroundOverlay?.checked),
+          chatBrandVisible: Boolean(chatBrandVisible?.checked),
           gender: agentGender?.value || state.activeAgent.gender || "unspecified",
           voiceGender: agentVoiceGender.value,
           voiceTone: agentVoiceTone.value,
@@ -1711,6 +2250,9 @@ function imageCapabilityText(config) {
 
 function renderMemory() {
   const nextMemory = state.memory || {};
+  const capsule = nextMemory.memory_capsule?.[0]?.text || "";
+  if (memoryCapsuleInput && document.activeElement !== memoryCapsuleInput) memoryCapsuleInput.value = capsule;
+  if (memoryCapsuleStatus) memoryCapsuleStatus.textContent = capsule ? `${capsule.length} 字` : "暂无记忆胶囊";
   const sections = [
     ["事实", nextMemory.facts],
     ["偏好", nextMemory.preferences],
@@ -1728,7 +2270,53 @@ function renderMemory() {
       count += 1;
       const div = document.createElement("div");
       div.className = "memory-item";
-      div.textContent = `${label}: ${item.text || item}`;
+      const header = document.createElement("div");
+      header.className = "memory-item-header";
+      const title = document.createElement("strong");
+      title.textContent = item.sourceName || label;
+      const badges = document.createElement("span");
+      badges.className = "memory-badges";
+      badges.textContent = [item.pinned ? "置顶" : "", item.confirmed ? "已核对" : ""].filter(Boolean).join(" · ");
+      header.append(title, badges);
+
+      const content = document.createElement("span");
+      content.className = "memory-content";
+      content.textContent = item.text || item;
+      div.append(header, content);
+
+      if (item.id) {
+        const controls = document.createElement("div");
+        controls.className = "memory-controls";
+        const importance = document.createElement("select");
+        importance.setAttribute("aria-label", "记忆重要程度");
+        const levels = [
+          [0.2, "一般"], [0.4, "有用"], [0.6, "重要"], [0.8, "很重要"], [1, "必须记住"]
+        ];
+        for (const [value, text] of levels) {
+          const option = document.createElement("option");
+          option.value = String(value);
+          option.textContent = text;
+          importance.appendChild(option);
+        }
+        importance.value = String(Math.min(1, Math.max(0.2, Math.round(Number(item.importance || 0.5) * 5) / 5)));
+        importance.addEventListener("change", () => saveMemoryItem(item.id, { importance: Number(importance.value) }, controls));
+
+        const confirmedLabel = document.createElement("label");
+        confirmedLabel.className = "memory-confirmed-control";
+        const confirmed = document.createElement("input");
+        confirmed.type = "checkbox";
+        confirmed.checked = Boolean(item.confirmed);
+        confirmed.addEventListener("change", () => saveMemoryItem(item.id, { confirmed: confirmed.checked }, controls));
+        confirmedLabel.append(confirmed, document.createTextNode("已核对"));
+
+        const pin = memoryActionButton(item.pinned ? "取消置顶" : "置顶", () => {
+          saveMemoryItem(item.id, { pinned: !item.pinned }, controls);
+        });
+        const edit = memoryActionButton("编辑", () => editMemoryItem(item, controls));
+        const remove = memoryActionButton("删除", () => deleteMemoryItem(item, controls), "danger");
+        controls.append(importance, confirmedLabel, pin, edit, remove);
+        div.appendChild(controls);
+      }
       memoryListEl.appendChild(div);
     }
   }
@@ -1826,6 +2414,16 @@ function createMessageNode(role, content, options = {}) {
     regenerateButton.addEventListener("click", () => regenerateLastAssistant(options.messageId));
     actions.appendChild(regenerateButton);
   }
+  if (options.canEdit && role === "user" && options.messageId && String(content || "").trim()) {
+    const actions = ensureMessageActions(node);
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "regenerate-button message-edit-button";
+    editButton.textContent = "编辑";
+    editButton.disabled = Boolean(state.regeneratingMessageId || pendingChatCount > 0);
+    editButton.addEventListener("click", () => beginMessageEdit(options.messageId, String(content || "")));
+    actions.appendChild(editButton);
+  }
   return node;
 }
 
@@ -1848,6 +2446,78 @@ function refreshRegenerateButtons() {
     button.disabled = Boolean(state.regeneratingMessageId || pendingChatCount > 0);
     button.textContent = isRegenerating ? "\u6b63\u5728\u6362..." : "\u6362\u4e00\u53e5";
   }
+  for (const button of messagesEl.querySelectorAll(".message-edit-button")) {
+    button.disabled = Boolean(state.regeneratingMessageId || pendingChatCount > 0);
+  }
+}
+
+function memoryActionButton(label, onClick, className = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `memory-action ${className}`.trim();
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+async function saveMemoryItem(id, patch, controls) {
+  setMemoryControlsBusy(controls, true);
+  try {
+    const result = await api(`/api/memories/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch)
+    });
+    state.memory = result.snapshot || state.memory;
+    renderMemory();
+  } catch (error) {
+    addMessage("system", `记忆保存失败：${error.message}`);
+    setMemoryControlsBusy(controls, false);
+  }
+}
+
+async function editMemoryItem(memory, controls) {
+  const content = prompt("编辑这条记忆", memory.text || "");
+  if (content === null || !content.trim() || content.trim() === memory.text) return;
+  await saveMemoryItem(memory.id, { content: content.trim(), confirmed: true }, controls);
+}
+
+async function deleteMemoryItem(memory, controls) {
+  if (!confirm(`删除这条记忆？\n${String(memory.text || "").slice(0, 120)}`)) return;
+  setMemoryControlsBusy(controls, true);
+  try {
+    const result = await api(`/api/memories/${encodeURIComponent(memory.id)}`, { method: "DELETE" });
+    state.memory = result.snapshot || state.memory;
+    renderMemory();
+  } catch (error) {
+    addMessage("system", `记忆删除失败：${error.message}`);
+    setMemoryControlsBusy(controls, false);
+  }
+}
+
+function setMemoryControlsBusy(controls, busy) {
+  controls?.querySelectorAll("button, select, input").forEach((element) => {
+    element.disabled = busy;
+  });
+}
+
+function beginMessageEdit(messageId, content) {
+  if (pendingChatCount > 0 || state.regeneratingMessageId) return;
+  state.editingUserMessageId = Number(messageId);
+  input.value = String(content || "");
+  composerEditMode.hidden = false;
+  sendButton.textContent = "重新发送";
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  input.focus();
+  input.setSelectionRange?.(input.value.length, input.value.length);
+}
+
+function cancelMessageEdit({ clearInput = false } = {}) {
+  state.editingUserMessageId = null;
+  if (clearInput) input.value = "";
+  composerEditMode.hidden = true;
+  sendButton.textContent = "发送";
+  input.style.height = "auto";
 }
 
 async function deleteMessage(messageId, node) {
@@ -2104,6 +2774,84 @@ async function cloneCurrentVoice() {
   }
 }
 
+async function optimizeAgentConfiguration() {
+  if (!state.activeAgent) return;
+  const oldText = optimizeAgentButton.textContent;
+  optimizeAgentButton.disabled = true;
+  optimizeAgentButton.textContent = "AI 优化中...";
+  agentOptimizeStatus.textContent = "正在结合当前设定与人物资料库整理角色...";
+  try {
+    const result = await api("/api/agent/optimize", {
+      method: "POST",
+      body: JSON.stringify({ draft: readAgentForm() })
+    });
+    const optimized = result.agent || {};
+    const preview = optimizedAgentPreview(optimized);
+    if (!preview) throw new Error("优化结果为空，请先填写一点角色设定。");
+    if (!confirm(`AI 已整理好以下设定，是否应用到当前角色？\n\n${preview}`)) {
+      agentOptimizeStatus.textContent = "已取消应用，原设定没有变化。";
+      return;
+    }
+    applyOptimizedAgentToForm(optimized);
+    const saveResult = await api("/api/config", {
+      method: "POST",
+      body: JSON.stringify({ agent: readAgentForm() })
+    });
+    await applyAgentResult(saveResult);
+    agentConfigStatus.textContent = "已保存";
+    agentOptimizeStatus.textContent = "AI 优化结果已应用并保存到本机。";
+  } catch (error) {
+    agentOptimizeStatus.textContent = error.message || "AI 优化失败，请稍后重试。";
+  } finally {
+    optimizeAgentButton.textContent = oldText;
+    optimizeAgentButton.disabled = false;
+  }
+}
+
+function optimizedAgentPreview(agent = {}) {
+  const fields = [
+    ["角色名", agent.name], ["一句话", agent.tagline], ["人设", agent.persona],
+    ["外貌", agent.appearance], ["关系", agent.relationship], ["我的身份", agent.userPersona],
+    ["说话风格", agent.voiceStyle], ["系统提示词", agent.systemPrompt],
+    ["开场白", agent.openingMessage], ["开场建议", agent.openingSuggestions],
+    ["默认场景", agent.visualContext], ["快捷问题", agent.prompts],
+    ["边界", agent.boundaries], ["安全规则", agent.safetyRules]
+  ];
+  return fields.map(([label, value]) => {
+    const text = Array.isArray(value) ? value.join(" / ") : String(value || "").trim();
+    if (!text) return "";
+    return `${label}：${text.length > 100 ? `${text.slice(0, 100)}...` : text}`;
+  }).filter(Boolean).join("\n");
+}
+
+function applyOptimizedAgentToForm(agent = {}) {
+  const textFields = [
+    [agentName, agent.name], [agentAvatarInput, agent.avatar], [agentTagline, agent.tagline],
+    [agentPersona, agent.persona], [agentAppearance, agent.appearance],
+    [agentRelationship, agent.relationship], [userPersona, agent.userPersona],
+    [agentVoiceStyle, agent.voiceStyle], [agentSystemPrompt, agent.systemPrompt],
+    [agentOpening, agent.openingMessage], [agentVisualContext, agent.visualContext]
+  ];
+  for (const [element, value] of textFields) {
+    const text = String(value || "").trim();
+    if (element && text) element.value = text;
+  }
+  const arrayFields = [
+    [agentOpeningSuggestions, agent.openingSuggestions], [agentPrompts, agent.prompts],
+    [agentBoundaries, agent.boundaries], [agentSafetyRules, agent.safetyRules]
+  ];
+  for (const [element, value] of arrayFields) {
+    if (element && Array.isArray(value) && value.length) element.value = value.join("\n");
+  }
+  if (String(agent.userPersona || "").trim()) {
+    userPersonaEnabled.checked = true;
+    renderUserPersonaEditor();
+  }
+  if (["female", "male", "nonbinary", "unspecified"].includes(agent.gender)) agentGender.value = agent.gender;
+  if (agent.voiceGender && [...agentVoiceGender.options].some((option) => option.value === agent.voiceGender)) agentVoiceGender.value = agent.voiceGender;
+  if (agent.voiceTone && [...agentVoiceTone.options].some((option) => option.value === agent.voiceTone)) agentVoiceTone.value = agent.voiceTone;
+}
+
 function readAgentForm() {
   const referenceImage = state.clearReferenceImage
     ? null
@@ -2127,7 +2875,10 @@ function readAgentForm() {
     appearance: agentAppearance.value.trim(),
     voiceStyle: agentVoiceStyle.value.trim(),
     relationship: agentRelationship.value.trim(),
+    userPersonaEnabled: Boolean(userPersonaEnabled?.checked),
+    userPersona: userPersona?.value.trim() || "",
     openingMessage: agentOpening.value.trim(),
+    openingSuggestions: lines(agentOpeningSuggestions?.value || "").slice(0, 3),
     systemPrompt: agentSystemPrompt.value.trim(),
     imageStyle: experienceImageStyle.value || "realistic",
     responseStyle: normalizeResponseStyleValue(responseStyle?.value),
@@ -2150,7 +2901,10 @@ function readAgentForm() {
     clearChatBackground: state.clearChatBackground,
     chatBackgroundOpacity: Number(chatBackgroundOpacity.value || state.activeAgent?.chatBackgroundOpacity || 0.18),
     chatBackgroundBlur: Number(chatBackgroundBlur.value || state.activeAgent?.chatBackgroundBlur || 0),
+    chatBackgroundOverlay: Boolean(chatBackgroundOverlay?.checked),
+    chatBrandVisible: Boolean(chatBrandVisible?.checked),
     prompts: lines(agentPrompts.value),
+    quickActionsEnabled: Boolean(quickActionsEnabled?.checked),
     boundaries: lines(agentBoundaries.value),
     safetyRules: lines(agentSafetyRules.value),
     isBuiltin: false
@@ -2242,6 +2996,8 @@ function renderAvatarNode(node, agent = {}) {
 function applyChatBackground(agent = state.activeAgent) {
   const panel = document.querySelector(".chat-panel");
   const background = agent?.chatBackground;
+  panel?.classList.toggle("background-overlay-off", agent?.chatBackgroundOverlay !== true);
+  renderSceneBrand(agent);
   if (!panel || !background?.data) {
     panel?.classList.remove("has-chat-background");
     panel?.style.removeProperty("--chat-bg-image");
@@ -2309,33 +3065,89 @@ function readImageFile(file) {
 }
 
 async function loadPersonaCorpusFiles(files, sourceLabel) {
+  if (state.personaCorpusImportPromise) {
+    personaCorpusStatus.textContent = "已有一批资料正在读取，请等待完成。";
+    return state.personaCorpusImportPromise;
+  }
+  personaCorpusFile.disabled = true;
+  personaCorpusFolder.disabled = true;
+  const task = loadPersonaCorpusFilesImpl(files, sourceLabel);
+  state.personaCorpusImportPromise = task;
+  try {
+    return await task;
+  } finally {
+    personaCorpusFile.disabled = false;
+    personaCorpusFolder.disabled = false;
+    if (state.personaCorpusImportPromise === task) state.personaCorpusImportPromise = null;
+  }
+}
+
+async function loadPersonaCorpusFilesImpl(files, sourceLabel) {
   const allFiles = files || [];
   if (!allFiles.length) return;
-  const readable = allFiles.filter(isSupportedCorpusFile);
+  const readable = allFiles.filter((file) => isSupportedCorpusTextFile(file) || isPdfCorpusFile(file));
   const skipped = allFiles.length - readable.length;
   const maxFiles = 200;
-  const maxTotalBytes = 8 * 1024 * 1024;
   const selected = readable.slice(0, maxFiles);
   let totalBytes = 0;
+  let outputBytes = 0;
   const blocks = [];
+  const errors = [];
 
-  personaCorpusStatus.textContent = `正在读取${sourceLabel}...`;
-  for (const file of selected) {
-    if (totalBytes + file.size > maxTotalBytes) break;
+  for (let index = 0; index < selected.length; index += 1) {
+    const file = selected[index];
+    const path = file.webkitRelativePath || file.name || `资料 ${index + 1}`;
+    if (totalBytes + file.size > 100 * 1024 * 1024) {
+      errors.push("单批文件总大小超过 100MB");
+      break;
+    }
     totalBytes += file.size;
     try {
-      const text = (await readTextFile(file)).trim();
-      if (text) {
-        const path = file.webkitRelativePath || file.name;
-        blocks.push(`\n\n===== ${path} =====\n${text}`);
+      let text = "";
+      if (isPdfCorpusFile(file)) {
+        if (file.size > 30 * 1024 * 1024) {
+          errors.push(`${path} 超过 30MB`);
+          continue;
+        }
+        text = await extractPdfText(file, {
+          onProgress: (page, total, stage) => {
+            personaCorpusStatus.textContent = stage === "recognizing"
+              ? `正在识别 ${index + 1}/${selected.length}：${path}（${page}/${total} 页）`
+              : `正在读取 ${index + 1}/${selected.length}：${path}（${page}/${total} 页）`;
+          },
+          readImagePage: async ({ pageNumber, image }) => {
+            const result = await api("/api/document/read-page", {
+              method: "POST",
+              body: JSON.stringify({ pageNumber, image })
+            });
+            return result.text || "";
+          }
+        });
+      } else {
+        if (file.size > 2 * 1024 * 1024) {
+          errors.push(`${path} 超过 2MB`);
+          continue;
+        }
+        personaCorpusStatus.textContent = `正在读取 ${index + 1}/${selected.length}：${path}`;
+        text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()).trim();
       }
-    } catch {
-      // Ignore unreadable files in mixed folders.
+      const ranged = selectCorpusTextRange(text, personaCorpusRangeMode?.value, personaCorpusRangeCount?.value);
+      if (!ranged.text) continue;
+      const block = `\n\n===== ${path}（${ranged.selected}/${ranged.total} 段）=====\n${ranged.text}`;
+      const blockBytes = new TextEncoder().encode(block).length;
+      if (outputBytes + blockBytes > 8 * 1024 * 1024) {
+        errors.push("读取后的文本总量超过 8MB");
+        break;
+      }
+      outputBytes += blockBytes;
+      blocks.push(block);
+    } catch (error) {
+      errors.push(`${path}：${isPdfCorpusFile(file) ? friendlyPdfError(error) : "不是有效的 UTF-8 文本"}`);
     }
   }
 
   if (!blocks.length) {
-    personaCorpusStatus.textContent = "没有读到可用文本";
+    personaCorpusStatus.textContent = errors[0] || "没有读到可用文本";
     return;
   }
 
@@ -2343,7 +3155,8 @@ async function loadPersonaCorpusFiles(files, sourceLabel) {
   personaCorpusText.value = [existing, ...blocks].filter(Boolean).join("\n");
   const limited = readable.length > selected.length ? `，仅读取前 ${selected.length} 个` : "";
   const sizeMb = (totalBytes / 1024 / 1024).toFixed(1);
-  personaCorpusStatus.textContent = `已读取 ${blocks.length} 个文本文件，约 ${sizeMb}MB${limited}${skipped ? `，跳过 ${skipped} 个非文本文件` : ""}`;
+  const failed = skipped + errors.length;
+  personaCorpusStatus.textContent = `已读取 ${blocks.length} 个文件，约 ${sizeMb}MB${limited}${failed ? `，${failed} 个未读取` : ""}`;
 }
 
 function personaCorpusSourceName() {
@@ -2352,20 +3165,6 @@ function personaCorpusSourceName() {
   const files = Array.from(personaCorpusFile.files || []);
   if (files.length > 1) return `${files.length} 个资料文件`;
   return files[0]?.name || "";
-}
-
-function isSupportedCorpusFile(file) {
-  const name = String(file?.name || "").toLowerCase();
-  const mime = String(file?.type || "").toLowerCase();
-  if (file.size > 2 * 1024 * 1024) return false;
-  return [
-    ".txt", ".md", ".markdown", ".srt", ".vtt", ".json", ".jsonl", ".csv", ".tsv", ".log",
-    ".yaml", ".yml"
-  ].some((ext) => name.endsWith(ext))
-    || [
-      "text/plain", "text/markdown", "text/csv", "text/tab-separated-values",
-      "application/json", "application/x-ndjson"
-    ].includes(mime);
 }
 
 function isSupportedVoiceSample(file) {
@@ -2446,12 +3245,11 @@ function toDataUrl(referenceImage) {
 }
 
 function setBusy(isBusy) {
-  const button = composer.querySelector("button");
-  if (button) {
-    button.disabled = isBusy;
-    button.textContent = isBusy
+  if (sendButton) {
+    sendButton.disabled = isBusy;
+    sendButton.textContent = isBusy
       ? pendingChatCount > 1 ? `排队中 ${pendingChatCount}` : "发送中"
-      : "发送";
+      : state.editingUserMessageId ? "重新发送" : "发送";
   }
   input.disabled = isBusy;
 }
@@ -2526,7 +3324,7 @@ function normalizeRatioValue(value, fallback = 0.5) {
 
 function normalizeResponseStyleValue(value) {
   const style = String(value || "").trim();
-  return ["balanced", "vivid", "dream", "lover", "reserved", "story"].includes(style) ? style : "balanced";
+  return ["balanced", "vivid", "dream", "lover", "reserved", "story", "immersive", "history"].includes(style) ? style : "balanced";
 }
 
 function roundToStep(value, digits = 2) {

@@ -1,4 +1,4 @@
-const RESPONSE_STYLES = ["balanced", "vivid", "dream", "lover", "reserved", "story"];
+const RESPONSE_STYLES = ["balanced", "vivid", "dream", "lover", "reserved", "story", "immersive", "history"];
 
 export function buildResponseProfile({ character = {}, message = "", history = [], retrievalPlan = null, safety = {}, workflow = "companionship", mood = "平稳", turnContext = {} }) {
   const runtime = character.runtime_config || {};
@@ -12,7 +12,7 @@ export function buildResponseProfile({ character = {}, message = "", history = [
   const strict = Boolean(retrievalPlan?.strictEvidence);
   const highRisk = safety.level === "crisis" || safety.level === "bounded";
   const concise = workflow === "plan" || workflow === "reflection";
-  const dreamLike = style === "dream" || style === "story" || workflow === "creative";
+  const dreamLike = style === "dream" || style === "story" || style === "immersive" || workflow === "creative";
   const intimate = style === "lover" || /想你|抱抱|亲|撒娇|吃醋|梦女|男友|女友|恋人/.test(message);
 
   let expressiveness = creativity;
@@ -129,7 +129,19 @@ function responseStrategy({ style, workflow, mood, strict, highRisk, intimate, d
       instruction: "事实回答必须收敛；可以保留角色语气，但不要为了生动补不存在的经历、时间、地点或细节。"
     };
   }
+  if (style === "history") {
+    return {
+      label: "历史聊天风格",
+      instruction: "优先模仿最近和导入历史中的句长、称呼、动作比例和口语习惯，但不要逐句复制，也不要把历史事件重演成当前事实。"
+    };
+  }
   if (style === "dream" || dreamLike) {
+    if (style === "immersive") {
+      return {
+        label: "沉浸式演绎",
+        instruction: "台词和能改变局势的行动是主体；括号最多补一个必要细节，不同时堆动作、神态、心理和环境，不让旁白抢走节奏。"
+      };
+    }
     return {
       label: "梦向剧情",
       instruction: "允许进入场景、补画面和动作细节；用具体环境、表情、停顿和互动推进，而不是只安慰。"

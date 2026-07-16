@@ -3,6 +3,9 @@ import { runContextAgent } from "./contextAgent.js";
 import { buildVoiceOutputPlan } from "./voiceAgent.js";
 import { routeAgentTurn } from "./routerAgent.js";
 import { runTextAgent } from "./textAgent.js";
+import { buildTemporalContext } from "./temporalContext.js";
+import { buildSceneConstraints, canProduceSpeech, enforceSceneConstraints } from "./sceneConstraints.js";
+import { buildStoryDirective, nextDialogueState } from "./storyDirectorAgent.js";
 
 export async function orchestrateCompanionTurn({
   agent,
@@ -14,9 +17,17 @@ export async function orchestrateCompanionTurn({
   history = [],
   llm,
   modelConfig,
+  userImage = null,
   traceId = "",
   turnContext = {}
 }) {
+  const temporalContext = buildTemporalContext({ history });
+  const storyDirective = buildStoryDirective({
+    userText: message,
+    dialogueState: agent?.dialogueState,
+    recentAssistant: history.filter((item) => item.role === "assistant").slice(-3).map((item) => item.content)
+  });
+  const sceneConstraints = buildSceneConstraints({ userText: message, dialogueState: agent?.dialogueState });
   const contextPlan = await runContextAgent({
     agent,
     character,
@@ -38,9 +49,16 @@ export async function orchestrateCompanionTurn({
     message,
     history,
     llm,
-    traceId
+    traceId,
+    temporalContext,
+    sceneConstraints,
+    storyDirective,
+    userImage
   });
-  const reply = textResult.reply;
+  const reply = {
+    ...textResult.reply,
+    text: enforceSceneConstraints(textResult.reply?.text, sceneConstraints)
+  };
   const router = routeAgentTurn({
     userText: message,
     reply,
@@ -53,7 +71,8 @@ export async function orchestrateCompanionTurn({
     router,
     userText: message,
     history,
-    llm
+    llm,
+    sceneConstraints
   });
 
   return {
@@ -71,10 +90,16 @@ export async function orchestrateCompanionTurn({
         },
         image_agent: router.imageAgent,
         voice_agent: router.voiceAgent,
-        review_agent: summarizeReviewAgent(outputs)
+        review_agent: summarizeReviewAgent(outputs),
+        scene_constraints: sceneConstraints,
+        story_director_agent: storyDirective
       },
       outputs
-    }
+    },
+    temporalContext,
+    sceneConstraints,
+    storyDirective,
+    dialogueState: nextDialogueState({ previous: agent?.dialogueState, directive: storyDirective, sceneConstraints })
   };
 }
 
@@ -111,7 +136,7 @@ function summarizeReviewAgent(outputs = []) {
   };
 }
 
-async function buildOutputPlan({ agent, character, reply, router, userText, history, llm }) {
+async function buildOutputPlan({ agent, character, reply, router, userText, history, llm, sceneConstraints = null }) {
   const shouldRenderText = reply.source !== "tool:image.generate" && !router.voiceAgent?.enabled;
   const outputs = [];
   const imagePlan = buildImageOutputPlan({ reply, router, userText, history, character });
@@ -138,7 +163,9 @@ async function buildOutputPlan({ agent, character, reply, router, userText, hist
 
   if (imagePlan) outputs.push(imagePlan);
 
-  const voicePlan = await buildVoiceOutputPlan({ reply, router, userText, history, agent, character, llm });
+  const voicePlan = canProduceSpeech(sceneConstraints)
+    ? await buildVoiceOutputPlan({ reply, router, userText, history, agent, character, llm })
+    : null;
   if (voicePlan) outputs.push(voicePlan);
 
   return outputs;

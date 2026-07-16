@@ -144,6 +144,133 @@ test("agent response experience settings are saved with safe defaults", () => {
   });
 });
 
+test("individual memories can be confirmed, prioritized, edited, and deleted per agent", () => {
+  withStore((store) => {
+    const memoryId = store.upsertMemory({
+      kind: "fact",
+      content: "用户喜欢旧内容",
+      importance: 0.4,
+      metadata: { agentId: "mori", sourceName: "聊天记录" }
+    });
+    const updated = store.updateMemory({
+      id: memoryId,
+      agentId: "mori",
+      content: "用户喜欢新的准确内容",
+      importance: 1,
+      confirmed: true,
+      pinned: true
+    });
+    assert.equal(updated.text, "用户喜欢新的准确内容");
+    assert.equal(updated.importance, 1);
+    assert.equal(updated.confirmed, true);
+    assert.equal(updated.pinned, true);
+    assert.equal(updated.sourceName, "聊天记录");
+    assert.equal(store.updateMemory({ id: memoryId, agentId: "other", importance: 0.2 }), null);
+    assert.equal(store.retrieveMemories("新的准确内容", { agentId: "mori", limit: 4 })[0].content, "用户喜欢新的准确内容");
+
+    const snapshot = store.getMemorySnapshot({ perKind: 20, agentId: "mori" });
+    assert.equal(snapshot.facts[0].confirmed, true);
+    assert.equal(snapshot.facts[0].pinned, true);
+    assert.equal(store.deleteMemory({ id: memoryId, agentId: "other" }), false);
+    assert.equal(store.deleteMemory({ id: memoryId, agentId: "mori" }), true);
+    assert.equal(store.getMemory(memoryId), null);
+    assert.equal(store.retrieveMemories("新的准确内容", { agentId: "mori", limit: 4 }).length, 0);
+  });
+});
+
+test("chat request ids are persisted on messages for idempotent recovery", () => {
+  withStore((store) => {
+    const id = store.addMessage({
+      sessionId: "mori",
+      role: "user",
+      content: "只发送一次",
+      metadata: { requestId: "req-once", requestStatus: "processing" }
+    });
+    assert.equal(store.getMessageByRequestId({ sessionId: "mori", requestId: "req-once", role: "user" }).id, id);
+    assert.equal(store.getMessageByRequestId({ sessionId: "other", requestId: "req-once", role: "user" }), null);
+    const patched = store.patchMessageMetadata(id, { requestStatus: "completed" });
+    assert.equal(patched.metadata.requestId, "req-once");
+    assert.equal(patched.metadata.requestStatus, "completed");
+  });
+});
+
+test("full desktop backup round-trips user data without exporting credentials", () => {
+  withStore((store) => {
+    const agent = store.upsertAgent({
+      id: "backup-role",
+      name: "Backup Role",
+      persona: "Persistent persona",
+      chatBackground: { data: "aGVsbG8=", mime: "image/png", name: "background.png" },
+      isBuiltin: false
+    });
+    store.setActiveAgent(agent.id);
+    const userId = store.addMessage({
+      sessionId: agent.id,
+      role: "user",
+      content: "backup user message",
+      metadata: { requestId: "req-backup" }
+    });
+    store.addMessage({
+      sessionId: agent.id,
+      role: "assistant",
+      content: "backup assistant message",
+      parentId: userId,
+      metadata: { requestId: "req-backup" }
+    });
+    store.upsertMemory({
+      kind: "fact",
+      content: "backup memory fact",
+      sourceMessageId: userId,
+      metadata: { agentId: agent.id, confirmed: true }
+    });
+    store.saveModelConfig({ officialUserToken: "secret-user-token", officialLicenseKey: "secret-license" });
+
+    const backup = store.exportUserBackup();
+    const serialized = JSON.stringify(backup);
+    assert.equal(backup.format, "2link-desktop-backup");
+    assert.doesNotMatch(serialized, /secret-user-token|secret-license/);
+
+    store.upsertAgent({ id: "temporary-role", name: "Temporary", isBuiltin: false });
+    const restored = store.importUserBackup(backup);
+    assert.equal(restored.activeAgentId, agent.id);
+    assert.equal(store.getAgent("temporary-role"), null);
+    assert.equal(store.getAgent(agent.id).chatBackground.name, "background.png");
+    assert.equal(store.getRecentMessages(agent.id, 10).length, 2);
+    assert.equal(store.retrieveMemories("backup memory fact", { agentId: agent.id, limit: 4 }).length, 1);
+    assert.equal(store.getModelConfig().officialUserToken, "secret-user-token");
+    assert.equal(store.getModelConfig().officialLicenseKey, "secret-license");
+  });
+});
+
+test("mobile-compatible role fields survive desktop persistence", () => {
+  withStore((store) => {
+    const saved = store.upsertAgent({
+      id: "cross-client-fields",
+      name: "Cross Client",
+      persona: "A custom role.",
+      userPersonaEnabled: true,
+      userPersona: "我是角色正在聊天的对象。",
+      openingSuggestions: ["第一条", "第二条", "第三条", "不应保存的第四条"],
+      quickActionsEnabled: true,
+      chatBackgroundOverlay: true,
+      chatBrandVisible: false,
+      responseStyle: "immersive",
+      isBuiltin: false
+    });
+
+    assert.equal(saved.userPersonaEnabled, true);
+    assert.equal(saved.userPersona, "我是角色正在聊天的对象。");
+    assert.deepEqual(saved.openingSuggestions, ["第一条", "第二条", "第三条"]);
+    assert.equal(saved.quickActionsEnabled, true);
+    assert.equal(saved.chatBackgroundOverlay, true);
+    assert.equal(saved.chatBrandVisible, false);
+    assert.equal(saved.responseStyle, "immersive");
+
+    const historyStyle = store.upsertAgent({ ...saved, responseStyle: "history" });
+    assert.equal(historyStyle.responseStyle, "history");
+  });
+});
+
 test("last active assistant can be used when regenerate id is stale", () => {
   withStore((store) => {
     const sessionId = "regen-agent";
@@ -163,5 +290,57 @@ test("last active assistant can be used when regenerate id is stale", () => {
     const staleId = assistantId + 9999;
     assert.equal(store.getMessage(staleId), null);
     assert.equal(store.getLastActiveAssistantMessage(sessionId).id, assistantId);
+  });
+});
+
+test("editing the last user message replaces its assistant reply", () => {
+  withStore((store) => {
+    const sessionId = "edit-agent";
+    const earlierUserId = store.addMessage({ sessionId, role: "user", content: "较早消息" });
+    store.addMessage({ sessionId, role: "assistant", content: "较早回复", parentId: earlierUserId });
+    const userId = store.addMessage({ sessionId, role: "user", content: "原消息" });
+    const assistantId = store.addMessage({ sessionId, role: "assistant", content: "原回复", parentId: userId });
+
+    assert.throws(
+      () => store.editLastUserMessage({ sessionId, id: earlierUserId, content: "不能修改" }),
+      /Only the last user message/
+    );
+
+    const edited = store.editLastUserMessage({ sessionId, id: userId, content: "修改后的消息" });
+    assert.equal(edited.content, "修改后的消息");
+    assert.equal(edited.metadata.revisions.at(-1).content, "原消息");
+    assert.equal(store.getMessage(assistantId).status, "replaced");
+    assert.equal(store.getLastActiveAssistantMessage(sessionId).content, "较早回复");
+  });
+});
+
+test("memory capsules are isolated per agent and update their search chunk", () => {
+  withStore((store) => {
+    store.saveMemoryCapsule({ agentId: "agent-a", content: "角色叫阿早，用户叫小夏。" });
+    store.saveMemoryCapsule({ agentId: "agent-b", content: "角色叫沐里。" });
+    assert.equal(store.getMemorySnapshot({ agentId: "agent-a" }).memory_capsule[0].text, "角色叫阿早，用户叫小夏。");
+    assert.equal(store.getMemorySnapshot({ agentId: "agent-b" }).memory_capsule[0].text, "角色叫沐里。");
+
+    store.saveMemoryCapsule({ agentId: "agent-a", content: "角色叫阿早，用户叫小夏，约定称呼是队长。" });
+    const snapshot = store.getMemorySnapshot({ agentId: "agent-a" });
+    assert.equal(snapshot.memory_capsule.length, 1);
+    assert.match(snapshot.memory_capsule[0].text, /队长/);
+    assert.ok(store.retrieveMemories("约定称呼队长", { agentId: "agent-a" }).some((item) => item.kind === "memory_capsule"));
+    assert.equal(store.retrieveMemories("约定称呼队长", { agentId: "agent-b" }).some((item) => /队长/.test(item.content)), false);
+  });
+});
+
+test("dialogue state persists independently for each agent", () => {
+  withStore((store) => {
+    store.saveAgentDialogueState("mori", {
+      storyMode: true,
+      lastUserEvent: "用户推开了门",
+      sceneConstraints: { speech: { mode: "silent", scope: "until_released" } }
+    });
+    const mori = store.getAgent("mori");
+    const other = store.getAgent("sharp-friend");
+    assert.equal(mori.dialogueState.storyMode, true);
+    assert.equal(mori.dialogueState.sceneConstraints.speech.mode, "silent");
+    assert.deepEqual(other.dialogueState, {});
   });
 });

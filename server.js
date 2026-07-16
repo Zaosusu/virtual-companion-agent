@@ -1,5 +1,5 @@
 ﻿import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
@@ -12,6 +12,9 @@ import { attachStepFunRealtimeBridge } from "./src/realtime/stepfunRealtimeBridg
 import { buildAgentModelRequest, resolveImageGenerationPolicy } from "./src/modelPolicy.js";
 import { generateImage } from "./src/tools/imageGeneration.js";
 import { cloneVoice, synthesizeSpeech, previewVoice } from "./src/tools/speechSynthesis.js";
+import { optimizeAgentDraft } from "./src/tools/agentOptimization.js";
+import { relayAudioTranscription } from "./src/tools/audioTranscription.js";
+import { relayDocumentPageRead } from "./src/tools/documentRead.js";
 import {
   agentFromImport,
   agentToPack,
@@ -34,7 +37,9 @@ const FREE_DAILY_CHAT_LIMIT = Number(process.env.COMPANION_FREE_DAILY_CHAT_LIMIT
 const PUBLIC_FREE_ACCESS_ENABLED = process.env.COMPANION_PUBLIC_FREE_ACCESS === "1";
 const SELF_HOSTED_ENABLED = process.env.COMPANION_SELF_HOSTED === "1";
 const DEBUG_TRACE_ENABLED = process.env.COMPANION_DEBUG_TRACE !== "0";
+const MAX_VOICE_MESSAGE_BYTES = 8 * 1024 * 1024;
 const chatQueues = new Map();
+const activeChatRequests = new Map();
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -55,6 +60,22 @@ async function readBody(req) {
   for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
+}
+
+async function readBodyBuffer(req, maxBytes = MAX_VOICE_MESSAGE_BYTES) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      const error = new Error("录音不能超过 8MB。");
+      error.status = 413;
+      error.code = "voice_audio_too_large";
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 function getRuntimeConfig() {
@@ -139,6 +160,39 @@ async function handleApi(req, res, pathname) {
       llm_enabled: modelConfig.enabled
     });
     return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/backup/export") {
+    return sendJson(res, 200, store.exportUserBackup());
+  }
+
+  if (req.method === "POST" && pathname === "/api/backup/import") {
+    const body = await readBody(req);
+    const backup = body.backup || body;
+    if (Buffer.byteLength(JSON.stringify(backup || {}), "utf8") > 250 * 1024 * 1024) {
+      return sendJson(res, 413, { error: "备份文件不能超过 250MB。", code: "backup_too_large" });
+    }
+    try {
+      const safetyBackup = store.exportUserBackup();
+      const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+      const safetyFile = `backup-before-restore-${stamp}.json`;
+      await writeFile(path.join(DATA_DIR, safetyFile), JSON.stringify(safetyBackup), "utf8");
+      const restored = store.importUserBackup(backup);
+      const { agent, modelConfig } = getRuntimeConfig();
+      return sendJson(res, 200, {
+        ok: true,
+        restored,
+        safety_backup: safetyFile,
+        agents: store.getAgents(),
+        active_agent_id: agent.id,
+        agent,
+        memory: store.getMemorySnapshot({ perKind: 20, agentId: agent.id }),
+        recent_messages: store.getRecentMessages(agent.id, 30),
+        model_config: toPublicModelConfig(modelConfig)
+      });
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message || "完整备份恢复失败。", code: "backup_import_failed" });
+    }
   }
 
   if (req.method === "GET" && pathname === "/api/agents") {
@@ -395,6 +449,48 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/api/memory/capsule") {
+    const body = await readBody(req);
+    const { agent } = getRuntimeConfig();
+    const memoryId = store.saveMemoryCapsule({ agentId: agent.id, content: body.content || "" });
+    return sendJson(res, 200, {
+      ok: true,
+      memoryId,
+      memory: store.getMemorySnapshot({ perKind: 20, agentId: agent.id })
+    });
+  }
+
+  if (req.method === "PATCH" && pathname.startsWith("/api/memories/")) {
+    const id = decodeURIComponent(pathname.split("/").at(-1) || "");
+    const body = await readBody(req);
+    const { agent } = getRuntimeConfig();
+    const memory = store.updateMemory({
+      id,
+      agentId: agent.id,
+      content: body.content,
+      importance: body.importance,
+      confirmed: body.confirmed,
+      pinned: body.pinned
+    });
+    if (!memory) return sendJson(res, 404, { error: "没有找到这条记忆。", code: "memory_not_found" });
+    return sendJson(res, 200, {
+      ok: true,
+      memory,
+      snapshot: store.getMemorySnapshot({ perKind: 20, agentId: agent.id })
+    });
+  }
+
+  if (req.method === "DELETE" && pathname.startsWith("/api/memories/")) {
+    const id = decodeURIComponent(pathname.split("/").at(-1) || "");
+    const { agent } = getRuntimeConfig();
+    const deleted = store.deleteMemory({ id, agentId: agent.id });
+    if (!deleted) return sendJson(res, 404, { error: "没有找到这条记忆。", code: "memory_not_found" });
+    return sendJson(res, 200, {
+      ok: true,
+      snapshot: store.getMemorySnapshot({ perKind: 20, agentId: agent.id })
+    });
+  }
+
   if (req.method === "DELETE" && pathname.startsWith("/api/messages/")) {
     const id = Number(decodeURIComponent(pathname.split("/").at(-1)));
     if (!Number.isFinite(id)) return sendJson(res, 400, { error: "message id is required" });
@@ -437,6 +533,39 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/api/agent/optimize") {
+    const body = await readBody(req);
+    const { agent, modelConfig } = getRuntimeConfig();
+    const llm = resolveChatModel(modelConfig);
+    if (!llm.apiKey || !llm.baseUrl || !llm.model) return sendAuthorizationRequired(res);
+    const history = store.getRecentMessages(agent.id, 20).map((item) => ({
+      role: item.role,
+      content: item.content,
+      createdAt: item.createdAt
+    }));
+    const { retrievedMemories } = runCragRetrieval({
+      store,
+      agentId: agent.id,
+      message: "角色完整设定 身份 经历 外貌 关系 说话风格 边界 开场白",
+      history,
+      limit: 16
+    });
+    try {
+      const result = await optimizeAgentDraft({
+        draft: body.draft || body.agent || agent,
+        memories: body.longTermMemory || retrievedMemories,
+        targetField: body.targetField || "",
+        llm
+      });
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (error) {
+      return sendJson(res, Number(error.status || 502), {
+        error: error.message || "AI 优化失败，请稍后重试。",
+        code: "agent_optimize_failed"
+      });
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/debug/state") {
     if (process.env.COMPANION_DEBUG_API !== "1") {
       return sendJson(res, 404, { error: "not found" });
@@ -454,17 +583,50 @@ async function handleApi(req, res, pathname) {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/api/chat/status") {
+    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    const requestId = String(url.searchParams.get("requestId") || "").trim().slice(0, 120);
+    if (!requestId) return sendJson(res, 400, { error: "requestId is required", code: "request_id_required" });
+    const { agent } = getRuntimeConfig();
+    const key = chatRequestKey(agent.id, requestId);
+    const completed = readCompletedChatRequest(agent.id, requestId);
+    if (completed) {
+      return sendJson(res, 200, {
+        ok: true,
+        state: "completed",
+        response: buildRecoveredChatResponse(agent, requestId, completed)
+      });
+    }
+    if (activeChatRequests.has(key)) return sendJson(res, 202, { ok: true, state: "pending", request_id: requestId });
+    return sendJson(res, 404, { ok: false, state: "not_found", code: "request_not_found" });
+  }
+
   if (req.method === "POST" && pathname === "/api/chat") {
     const traceId = createTraceId();
     const chatStartedAt = Date.now();
     const body = await readBody(req);
     const message = String(body.message || "").trim();
+    const requestId = String(body.requestId || body.request_id || traceId).trim().slice(0, 120);
+    const editMessageId = Number(body.edit_message_id || body.editMessageId || 0);
+    let userImage = null;
+    let userVoice = null;
+    try {
+      userImage = normalizeChatImage(body.image);
+      userVoice = normalizeChatVoice(body.voice);
+      if (userImage && userVoice) throw new Error("一条消息不能同时发送图片和语音。");
+    } catch (error) {
+      return sendJson(res, 400, { error: error.message, code: "invalid_chat_media" });
+    }
     if (!message) return sendJson(res, 400, { error: "message is required" });
 
     const { agent, character, modelConfig } = getRuntimeConfig();
+    const requestKey = chatRequestKey(agent.id, requestId);
+    beginChatRequest(requestKey);
     return enqueueByKey(`chat:${agent.id}`, async () => {
     traceLog(traceId, "chat.start", { messageChars: message.length, agentId: agent.id });
     const sessionId = agent.id;
+    const completed = readCompletedChatRequest(agent.id, requestId);
+    if (completed) return sendJson(res, 200, buildRecoveredChatResponse(agent, requestId, completed));
     const quota = prepareChatAccess(modelConfig);
     if (!quota.allowed && quota.code === "official_license_required") {
       return sendAuthorizationRequired(res);
@@ -476,11 +638,54 @@ async function handleApi(req, res, pathname) {
         quota
       });
     }
-    const userMessageId = store.addMessage({ sessionId, role: "user", content: message, status: "active" });
+    const existingUserMessage = store.getMessageByRequestId({ sessionId, requestId, role: "user" });
+    if (existingUserMessage && existingUserMessage.content !== message) {
+      return sendJson(res, 409, { error: "同一条请求不能发送不同内容。", code: "request_id_conflict" });
+    }
+    let userMessageId = existingUserMessage?.id || null;
+    if (!userMessageId && editMessageId > 0) {
+      try {
+        userMessageId = store.editLastUserMessage({ sessionId, id: editMessageId, content: message }).id;
+        store.patchMessageMetadata(userMessageId, { requestId, requestStatus: "processing" });
+        traceLog(traceId, "chat.user_message_edited", { agentId: agent.id, userMessageId });
+      } catch (error) {
+        return sendJson(res, 409, { error: error.message || "只能修改最后一条用户消息。", code: "message_edit_conflict" });
+      }
+    } else if (!userMessageId) {
+      userMessageId = store.addMessage({
+        sessionId,
+        role: "user",
+        content: message,
+        status: "active",
+        metadata: userImage ? {
+          requestId,
+          requestStatus: "processing",
+          type: "image",
+          source: "user:image",
+          mime: userImage.mime,
+          name: userImage.name,
+          b64Json: userImage.data,
+          imageUrl: `data:${userImage.mime};base64,${userImage.data}`
+        } : userVoice ? {
+          requestId,
+          requestStatus: "processing",
+          type: "voice",
+          source: "user:voice",
+          transcript: message,
+          audio: {
+            audioBase64: userVoice.data,
+            mimeType: userVoice.mime,
+            format: userVoice.format,
+            durationMs: userVoice.durationMs
+          }
+        } : { requestId, requestStatus: "processing" }
+      });
+    }
     const ragStartedAt = Date.now();
     const history = store.getRecentMessages(sessionId, 14).map((item) => ({
       role: item.role,
-      content: item.content
+      content: item.content,
+      createdAt: item.createdAt
     }));
     const { retrievedMemories, retrievalPlan } = runCragRetrieval({
       store,
@@ -538,6 +743,7 @@ async function handleApi(req, res, pathname) {
           }
         },
         modelConfig,
+        userImage,
         traceId,
         turnContext: {
           regenerate: false,
@@ -573,18 +779,28 @@ async function handleApi(req, res, pathname) {
       replySource: turn.reply?.source || "",
       outputs: (turn.orchestration?.outputs || []).map((item) => item.type)
     });
-    sendJson(res, 200, finalizeChatTurn({
-      agent,
+    const savedAgent = turn.dialogueState
+      ? store.saveAgentDialogueState(agent.id, turn.dialogueState)
+      : agent;
+    const result = finalizeChatTurn({
+      agent: savedAgent,
       sessionId,
       message,
       userMessageId,
+      requestId,
       reply: turn.reply,
       orchestration: turn.orchestration,
       retrievedMemories,
       retrievalPlan,
       quota
-    }));
     });
+    markChatRequestCompleted(agent.id, requestId, {
+      userMessageId,
+      assistantMessageId: result.assistant_message_id
+    });
+    store.patchMessageMetadata(userMessageId, { requestStatus: "completed" });
+    sendJson(res, 200, result);
+    }).finally(() => endChatRequest(requestKey));
   }
 
   if (req.method === "POST" && pathname === "/api/chat/regenerate") {
@@ -632,13 +848,14 @@ async function handleApi(req, res, pathname) {
       }
 
       const message = userMessage.content;
+      const userImage = normalizeStoredChatImage(userMessage.metadata);
       const history = store.getActiveMessagesBefore({
         sessionId,
         beforeId: oldAssistant.id,
         limit: 20
       })
         .filter((item) => item.id !== oldAssistant.id)
-        .map((item) => ({ role: item.role, content: item.content }));
+        .map((item) => ({ role: item.role, content: item.content, createdAt: item.createdAt }));
       const { retrievedMemories, retrievalPlan } = runCragRetrieval({
         store,
         agentId: agent.id,
@@ -669,6 +886,7 @@ async function handleApi(req, res, pathname) {
             }
           },
           modelConfig,
+          userImage,
           traceId,
           turnContext: {
             regenerate: true,
@@ -703,8 +921,11 @@ async function handleApi(req, res, pathname) {
         elapsedMs: Date.now() - chatStartedAt,
         replySource: turn.reply?.source || ""
       });
+      const savedAgent = turn.dialogueState
+        ? store.saveAgentDialogueState(agent.id, turn.dialogueState)
+        : agent;
       sendJson(res, 200, finalizeRegeneratedChatTurn({
-        agent,
+        agent: savedAgent,
         sessionId,
         userMessage,
         oldAssistant,
@@ -793,6 +1014,52 @@ async function handleApi(req, res, pathname) {
       sendJson(res, 500, { error: error.message || "tts failed" });
     }
     return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/audio/transcribe") {
+    const { modelConfig } = getRuntimeConfig();
+    if (!usesOfficialGateway(modelConfig)) return sendAuthorizationRequired(res);
+    try {
+      const audio = await readBodyBuffer(req);
+      const result = await relayAudioTranscription({
+        baseUrl: modelConfig.officialBaseUrl,
+        authToken: officialGatewayAuth(modelConfig),
+        audio,
+        format: req.headers["x-audio-format"] || "wav",
+        language: req.headers["x-audio-language"] || "zh"
+      });
+      traceLog(createTraceId("asr"), "audio.transcribe", {
+        status: result.status,
+        bytes: audio.length,
+        format: req.headers["x-audio-format"] || "wav"
+      });
+      return sendJson(res, result.status, result.data);
+    } catch (error) {
+      const status = Number(error.status || 500);
+      return sendJson(res, status, {
+        ok: false,
+        error: error.message || "语音识别失败，请重新录制。",
+        code: error.code || "voice_transcription_failed"
+      });
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/document/read-page") {
+    const body = await readBody(req);
+    const { modelConfig } = getRuntimeConfig();
+    if (!usesOfficialGateway(modelConfig)) return sendAuthorizationRequired(res);
+    const result = await relayDocumentPageRead({
+      baseUrl: modelConfig.officialBaseUrl,
+      authToken: officialGatewayAuth(modelConfig),
+      image: body.image || {},
+      pageNumber: body.pageNumber,
+      model: modelConfig.officialModel
+    });
+    traceLog(createTraceId("document"), "document.read_page", {
+      status: result.status,
+      pageNumber: body.pageNumber || 1
+    });
+    return sendJson(res, result.status, result.data);
   }
 
   if (req.method === "POST" && pathname === "/api/image") {
@@ -959,6 +1226,67 @@ async function handleApi(req, res, pathname) {
   sendJson(res, 404, { error: "not found" });
 }
 
+function chatRequestKey(agentId, requestId) {
+  return `chat_request:${String(agentId || "")}:${String(requestId || "")}`;
+}
+
+function beginChatRequest(key) {
+  activeChatRequests.set(key, Number(activeChatRequests.get(key) || 0) + 1);
+}
+
+function endChatRequest(key) {
+  const remaining = Number(activeChatRequests.get(key) || 0) - 1;
+  if (remaining > 0) activeChatRequests.set(key, remaining);
+  else activeChatRequests.delete(key);
+}
+
+function readCompletedChatRequest(agentId, requestId) {
+  const value = store.getMeta(chatRequestKey(agentId, requestId), "");
+  if (value) {
+    try {
+      const record = JSON.parse(value);
+      if (record?.state === "completed") return record;
+    } catch {}
+  }
+  const user = store.getMessageByRequestId({ sessionId: agentId, requestId, role: "user" });
+  if (user?.metadata?.requestStatus !== "completed") return null;
+  const assistant = store.getMessageByRequestId({ sessionId: agentId, requestId, role: "assistant" });
+  return {
+    state: "completed",
+    requestId,
+    agentId,
+    userMessageId: user.id,
+    assistantMessageId: assistant?.id || null,
+    completedAt: user.updatedAt
+  };
+}
+
+function markChatRequestCompleted(agentId, requestId, details = {}) {
+  store.setMeta(chatRequestKey(agentId, requestId), JSON.stringify({
+    state: "completed",
+    requestId,
+    agentId,
+    userMessageId: details.userMessageId || null,
+    assistantMessageId: details.assistantMessageId || null,
+    completedAt: new Date().toISOString()
+  }));
+}
+
+function buildRecoveredChatResponse(agent, requestId, record = {}) {
+  return {
+    ok: true,
+    recovered: true,
+    request_id: requestId,
+    user_message_id: record.userMessageId || null,
+    assistant_message_id: record.assistantMessageId || null,
+    agent: store.getAgent(agent.id) || agent,
+    memory: store.getMemorySnapshot({ agentId: agent.id }),
+    recent_messages: store.getRecentMessages(agent.id, 30),
+    outputs: [],
+    retrieved_memories: []
+  };
+}
+
 function maybeCompressConversation(sessionId, agentId = sessionId) {
   const count = store.getUncompressedMessageCount(sessionId);
   if (count < COMPRESSION_MESSAGE_WINDOW) return { triggered: false, uncompressed_count: count };
@@ -992,7 +1320,7 @@ function maybeCompressConversation(sessionId, agentId = sessionId) {
   });
 }
 
-function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orchestration, retrievedMemories, retrievalPlan, quota }) {
+function finalizeChatTurn({ agent, sessionId, message, userMessageId, requestId, reply, orchestration, retrievedMemories, retrievalPlan, quota }) {
   const outputs = orchestration?.outputs || [];
   const hasVoiceOutput = outputs.some((output) => output.type === "voice");
   const hasTextOutput = outputs.some((output) => output.type === "text");
@@ -1009,7 +1337,8 @@ function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orc
       mood: reply.mood,
       workflow: reply.workflow,
       safetyLevel: reply.safety?.level,
-      source: reply.source
+      source: reply.source,
+      metadata: { requestId }
     })
     : null;
 
@@ -1053,6 +1382,7 @@ function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orc
 
   const compression = maybeCompressConversation(sessionId, agent.id);
   return {
+    request_id: requestId,
     reply,
     orchestration,
     outputs,
@@ -1064,7 +1394,9 @@ function finalizeChatTurn({ agent, sessionId, message, userMessageId, reply, orc
     compression,
     quota: commitChatAccess(quota),
     saved,
-    assistant_message_id: assistantMessageId
+    user_message_id: userMessageId,
+    assistant_message_id: assistantMessageId,
+    recent_messages: store.getRecentMessages(sessionId, 30)
   };
 }
 
@@ -1659,6 +1991,56 @@ function toImageDataUrl(image) {
   if (data.startsWith("data:image/")) return data;
   const mime = String(image.mime || "image/png");
   return `data:${mime};base64,${data}`;
+}
+
+function normalizeChatImage(value) {
+  if (!value) return null;
+  const image = safeObject(value);
+  const mime = String(image.mime || image.mimeType || "").toLowerCase();
+  if (!["image/png", "image/jpeg", "image/webp"].includes(mime)) {
+    throw new Error("聊天图片仅支持 png、jpg 或 webp。");
+  }
+  const data = String(image.data || image.b64Json || "").replace(/^data:image\/[^;]+;base64,/, "").trim();
+  if (!data) throw new Error("聊天图片内容为空。");
+  if (Buffer.byteLength(data, "base64") > 10 * 1024 * 1024) throw new Error("聊天图片不能超过 10MB。");
+  return { data, mime, name: String(image.name || "chat-image").slice(0, 180) };
+}
+
+function normalizeChatVoice(value) {
+  if (!value) return null;
+  const voice = safeObject(value);
+  const mime = String(voice.mime || voice.mimeType || "audio/webm").split(";")[0].toLowerCase();
+  const supported = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg"];
+  if (!supported.includes(mime)) throw new Error("当前语音格式无法发送，请重新录制。");
+  const data = String(voice.data || voice.audioBase64 || "").replace(/^data:audio\/[^;]+;base64,/, "").trim();
+  if (!data) throw new Error("语音内容为空，请重新录制。");
+  if (Buffer.byteLength(data, "base64") > 8 * 1024 * 1024) throw new Error("语音不能超过 8MB。");
+  const format = ["mp3", "wav", "mp4", "ogg", "webm"].includes(String(voice.format || "").toLowerCase())
+    ? String(voice.format).toLowerCase()
+    : mime.includes("mpeg") || mime.includes("mp3") ? "mp3"
+      : mime.includes("wav") ? "wav"
+        : mime.includes("mp4") ? "mp4"
+          : mime.includes("ogg") ? "ogg" : "webm";
+  return {
+    data,
+    mime,
+    format,
+    durationMs: Math.min(120_000, Math.max(0, Number(voice.durationMs || 0))),
+    name: String(voice.name || `voice-message.${format}`).slice(0, 180)
+  };
+}
+
+function normalizeStoredChatImage(metadata = {}) {
+  if (metadata?.source !== "user:image" && metadata?.type !== "image") return null;
+  try {
+    return normalizeChatImage({
+      data: metadata.b64Json || String(metadata.imageUrl || "").split(",").at(-1),
+      mime: metadata.mime || String(metadata.imageUrl || "").match(/^data:([^;]+)/)?.[1],
+      name: metadata.name || metadata.prompt || "chat-image"
+    });
+  } catch {
+    return null;
+  }
 }
 
 function publicAppearanceError(error) {
