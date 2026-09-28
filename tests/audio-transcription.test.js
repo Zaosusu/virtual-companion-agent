@@ -74,7 +74,7 @@ test("browser transcription request sends binary audio and returns editable text
 test("desktop relay preserves the official transcription protocol", async () => {
   let request = null;
   const result = await relayAudioTranscription({
-    baseUrl: "https://role-api.example.com/",
+    baseUrl: "https://2link-api.example.com/",
     authToken: "desktop-token",
     audio: Buffer.from("wav-data"),
     format: "wav",
@@ -89,7 +89,7 @@ test("desktop relay preserves the official transcription protocol", async () => 
   });
   assert.equal(result.status, 200);
   assert.equal(result.data.text, "识别成功");
-  assert.equal(request.url, "https://role-api.example.com/api/audio/transcribe");
+  assert.equal(request.url, "https://2link-api.example.com/api/audio/transcribe");
   assert.equal(request.options.headers.authorization, "Bearer desktop-token");
   assert.equal(request.options.headers["content-type"], "application/octet-stream");
   assert.deepEqual(request.options.body, Buffer.from("wav-data"));
@@ -101,7 +101,7 @@ test("voice transcription reports auth, quota, size, and empty speech clearly", 
   assert.equal(unauthorized.data.code, "authorization_required");
 
   const quota = await relayAudioTranscription({
-    baseUrl: "https://role-api.example.com",
+    baseUrl: "https://2link-api.example.com",
     authToken: "token",
     audio: Buffer.from("x"),
     fetchImpl: async () => new Response(JSON.stringify({ code: "quota_exceeded" }), { status: 429 })
@@ -111,7 +111,7 @@ test("voice transcription reports auth, quota, size, and empty speech clearly", 
   assert.match(friendlyVoiceTranscriptionError({ status: 429, code: "quota_exceeded" }), /额度/);
 
   const empty = await relayAudioTranscription({
-    baseUrl: "https://role-api.example.com",
+    baseUrl: "https://2link-api.example.com",
     authToken: "token",
     audio: Buffer.from("x"),
     fetchImpl: async () => new Response(JSON.stringify({ text: "" }), { status: 200 })

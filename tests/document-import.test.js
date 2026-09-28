@@ -35,7 +35,7 @@ test("corpus file detection includes PDF and common UTF-8 text formats", () => {
 test("scanned PDF page relay sends a multimodal document-reading request", async () => {
   let request = null;
   const result = await relayDocumentPageRead({
-    baseUrl: "https://role-api.example.com/",
+    baseUrl: "https://2link-api.example.com/",
     authToken: "desktop-token",
     image: { data: "aGVsbG8=", mime: "image/jpeg" },
     pageNumber: 3,
@@ -50,7 +50,7 @@ test("scanned PDF page relay sends a multimodal document-reading request", async
   });
   assert.equal(result.status, 200);
   assert.equal(result.data.text, "页面正文");
-  assert.equal(request.url, "https://role-api.example.com/api/chat");
+  assert.equal(request.url, "https://2link-api.example.com/api/chat");
   assert.equal(request.options.headers.authorization, "Bearer desktop-token");
   assert.equal(request.body.orchestratorTask, "tool_document_read");
   assert.equal(request.body.messages[1].content[1].type, "image_url");
@@ -63,7 +63,7 @@ test("scanned PDF relay normalizes auth, quota, and empty-page failures", async 
   assert.equal(auth.data.code, "authorization_required");
 
   const quota = await relayDocumentPageRead({
-    baseUrl: "https://role-api.example.com",
+    baseUrl: "https://2link-api.example.com",
     authToken: "token",
     image: { data: "x" },
     fetchImpl: async () => new Response(JSON.stringify({ code: "quota_exceeded" }), { status: 429 })
@@ -72,7 +72,7 @@ test("scanned PDF relay normalizes auth, quota, and empty-page failures", async 
   assert.equal(quota.data.code, "quota_exceeded");
 
   const empty = await relayDocumentPageRead({
-    baseUrl: "https://role-api.example.com",
+    baseUrl: "https://2link-api.example.com",
     authToken: "token",
     image: { data: "x" },
     fetchImpl: async () => new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), { status: 200 })
